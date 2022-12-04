@@ -15,13 +15,16 @@ class Parser
 
   let_stmt : "let" WORD "=" expr_0 { LetStmt.new(val[1], val[3]) }
 
-  expr_0 : fun | if_ | letin | expr_1
+  expr_0 : fun | funm | if_ | letin | expr_1
   expr_1 : bin | expr_5 
   expr_5 : app | expr_10
   expr_10 : atom
 
   if_ : "if" expr_0 "then" expr_0 "else" expr_0 { If.new(val[1], val[3], val[5]) }
   fun : "fun" WORD ":" typ_0 "=>" expr_0 { Fun.new(val[1], val[3], val[5]) }
+  funm : "fun" funm_args "=>" expr_0 { funm_sugar(val[1].flatten, val[3]) }
+  funm_args : funm_arg funm_args { [val[0], val[1]] } | funm_arg
+  funm_arg : "(" WORD ":" typ_0 ")" { Arg.new(val[1], val[3]) }
   app : expr_5 expr_10 { App.new(val[0], val[1]) }
   bin : expr_1 "+" expr_1 { Bin.new(:+, val[0], val[2]) }
       | expr_1 "-" expr_1 { Bin.new(:-, val[0], val[2]) }
@@ -106,8 +109,17 @@ def next_token
   @tokens.shift
 end
 
+def funm_sugar(args, body)
+  last, *args = args.reverse
+  init = Fun.new(last.arg, last.typ, body)
+  args.reduce(init) do |acc, arg|
+    Fun.new(arg.arg, arg.typ, acc)
+  end
+end
+
 ---- header
 class Fun < Struct.new :arg, :typ, :body; end
+class Arg < Struct.new :arg, :typ; end
 class App < Struct.new :f, :arg; end
 class If < Struct.new :cond, :then_, :else_; end
 class Bin < Struct.new :op, :a, :b; end
@@ -179,7 +191,7 @@ class Interpreter
               fail "unbounded variable #{expr}"
             end
           else
-            result = Kernel.method(sym)
+            result = Kernel.method(sym).curry
           end
         rescue NameError => e
           fail "unbounded variable #{expr}"

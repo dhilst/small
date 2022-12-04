@@ -33,7 +33,7 @@ class Parser
       | expr_1 "/" expr_1 { Bin.new(:"/", val[0], val[2]) }
       | expr_1 "=" expr_1 { Bin.new(:"==", val[0], val[2]) }
       | expr_1 "|>" expr_1 { App.new(val[2], val[0]) }
-  atom : WORD { val[0].to_sym } | const | hole | "(" expr_0 ")" { val[1] } | list
+  atom : WORD { val[0].to_sym } | const | hole | "()" { :unit } | "(" expr_0 ")" { val[1] } | list
   list : "[]" | "[" items "]" { [val[1]].flatten }
   items : expr_0 | expr_0 "," items { [val[0], val[2]] }
   const : INT | TRUE { true } | FALSE { false } | UNIT | STRING
@@ -54,7 +54,7 @@ end
 
 CONSTS = %w[true false unit]
 KEYWORDS = %w[def fun int if then else list let in]
-SYMBOLS = %w(=> |> = [ ] ( ) : -> + - * / ; , ? $ _)
+SYMBOLS = %w(=> |> () = [ ] ( ) : -> + - * / ; , ? $ _)
             .map { |x| Regexp.quote(x) }
 
 def readstring(s)
@@ -174,6 +174,8 @@ class Interpreter
         eval_expr(expr.else_, env)
       end
     when Symbol
+      return expr if [:unit].include?(expr)
+
       if env.key?(expr)
         env[expr]
       else

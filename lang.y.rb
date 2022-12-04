@@ -12,13 +12,13 @@ class Parser
 
   def_ : "def" WORD "=" expr_0 { Def.new(val[1], val[3]) }
 
-  expr_0 : lamb | if_ | expr_1
+  expr_0 : fun | if_ | expr_1
   expr_1 : bin | expr_2 
   expr_2 : app | expr_3
   expr_3 : atom
 
   if_ : "if" expr_0 "then" expr_0 "else" expr_0 { If.new(val[1], val[3], val[5]) }
-  lamb : "fun" WORD  ":" typ_0 "=>" expr_0 { Fun.new(val[1], val[3], val[5]) }
+  fun : "fun" WORD  ":" typ_0 "=>" expr_0 { Fun.new(val[1], val[3], val[5]) }
   app : expr_2 expr_3 { App.new(val[0], val[1]) }
   bin : expr_1 "+" expr_1 { Bin.new("+", val[0], val[2]) }
   atom : WORD { val[0].to_sym } | const | hole | "(" expr_0 ")" { val[1] } | list
@@ -28,12 +28,12 @@ class Parser
   hole : "?" { :hole }
 
   typ_0 : t_arrow | typ_1
-  typ_1 : t_atom
+  typ_1 : t_app | typ_2
+  typ_2 : t_atom
 
-  t_atom : t_const | t_hole | t_unk
-  t_const : "int" { :t_int }
-  t_hole : "?" { :t_hole }
-  t_unk : "_" { :t_infer }
+  t_app : typ_1 typ_2
+  t_atom : t_const | "(" typ_0 ")" { val[1] }
+  t_const : "int" { :t_int } | "list" typ_2 { [:t_list, val[1]] }
   t_arrow : typ_1 "->" typ_0 { [:t_arrow, val[0], val[2]] }
 end
 
@@ -194,8 +194,7 @@ require "net/http";
 def uri = URI("http://google.com");
 puts uri;
 p (Net::HTTP.get_response uri);
-(fun a : int => p x) 1;
-(fun a : int => p x) 1;
+(fun x : list (int -> int) => p x) 1;
 p [1,2,3,4]
 END
 )

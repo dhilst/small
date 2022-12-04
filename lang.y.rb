@@ -113,18 +113,10 @@ class If < Struct.new :cond, :then_, :else_; end
 class Bin < Struct.new :op, :a, :b; end
 class LetStmt < Struct.new :name, :value; end
 
-class Stdlib
-  def map(proc, args, env)
-    iterable, *_ = args
-    iterable.map { |x| proc.call(x) }
-  end
-end
-
 class Interpreter
   attr_accessor :ast
   def initialize(ast)
     @ast = ast
-    @stdlib = Stdlib.new
   end
 
   def eval
@@ -175,8 +167,17 @@ class Interpreter
         sym = expr.to_s
         begin
           if sym.include? "."
-            namespace, _, name = sym.partition(".")
-            result = Object.const_get(namespace).method(name)
+            namespace, _, name = sym.partition(".").map(&:to_sym)
+            const = Object.const_get(namespace)
+            x = const.instance_methods.include?(name)
+            puts "#{namespace} #{name} #{x}"
+            if const.respond_to?(name)
+              result = const.method(name)
+            elsif const.instance_methods.include?(name)
+              result = Proc.new {|x| const.instance_method(name).bind(x) }.curry
+            else
+              fail "unbounded variable #{expr}"
+            end
           else
             result = Kernel.method(sym)
           end
@@ -211,6 +212,7 @@ class Interpreter
         f = eval_expr(expr.f, env)
         f.call(arg)
       when Proc, Method
+        p expr
         arg = eval_expr(expr.arg, env)
         expr.f.call(arg)
       when App

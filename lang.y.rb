@@ -161,6 +161,9 @@ class Interpreter
 
   def eval_expr(expr, env)
     case expr
+    when String
+      puts "string #{expr.encode}"
+      return expr.encode
     when Integer, String, TrueClass, FalseClass
       return expr
     when Array
@@ -188,7 +191,12 @@ class Interpreter
             if const.respond_to?(name)
               result = const.method(name)
             elsif const.instance_methods.include?(name)
-              result = Proc.new {|x| const.instance_method(name).bind(x) }.curry
+              instance_method = const.instance_method(name)
+              if instance_method.arity == 0
+                result = Proc.new {|x| instance_method.bind(x).call }
+              else
+                result = Proc.new {|x| instance_method.bind(x) }.curry
+              end
             else
               fail "unbounded variable #{expr}"
             end

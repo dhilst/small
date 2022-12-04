@@ -35,7 +35,7 @@ class Parser
   atom : WORD { val[0].to_sym } | const | hole | "(" expr_0 ")" { val[1] } | list
   list : "[]" | "[" items "]" { [val[1]].flatten }
   items : expr_0 | expr_0 "," items { [val[0], val[2]] }
-  const : INT | TRUE { true } | FALSE { false } | UNIT | STRING 
+  const : INT | TRUE { true } | FALSE { false } | UNIT | STRING
   letin : "let" WORD "=" expr_0 "in" expr_0 { App.new(Fun.new(val[1], val[5]), val[3]) }
   hole : "?" { :hole }
 
@@ -45,7 +45,7 @@ class Parser
 
   t_app : typ_1 typ_2
   t_atom : t_const | "(" typ_0 ")" { val[1] }
-  t_const : "int" { :t_int } | "list" typ_2 { [:t_list, val[1]] }
+  t_const : "int" { :t_int } | "list" typ_2 { [:t_list, val[1]] } | "_" { :t_under }
   t_arrow : typ_1 "->" typ_0 { [:t_arrow, val[0], val[2]] }
 end
 
@@ -53,7 +53,7 @@ end
 
 CONSTS = %w[true false unit]
 KEYWORDS = %w[def fun int if then else list let]
-SYMBOLS = %w(=> |> = [ ] ( ) : -> + - * / ; , ? $)
+SYMBOLS = %w(=> |> = [ ] ( ) : -> + - * / ; , ? $ _)
             .map { |x| Regexp.quote(x) }
 
 def readstring(s)
@@ -182,7 +182,6 @@ class Interpreter
             namespace, _, name = sym.partition(".").map(&:to_sym)
             const = Object.const_get(namespace)
             x = const.instance_methods.include?(name)
-            puts "#{namespace} #{name} #{x}"
             if const.respond_to?(name)
               result = const.method(name)
             elsif const.instance_methods.include?(name)
@@ -204,27 +203,11 @@ class Interpreter
       when Symbol
         f = eval_expr(expr.f, env)
         eval_expr(App.new(f, expr.arg), env)
-        # if env.key?(expr.f)
-        #   f = env[expr.f]
-        #   arg = eval_expr(expr.arg, env)
-        #   eval_expr(App.new(f, arg), env)
-        # else
-        #   arg = eval_expr(expr.arg, env)
-        #   fname = expr.f.to_s
-        #   if fname.include? "."
-        #     namespace, _, name = fname.partition(".")
-        #     result = Object.const_get(namespace).send(name, arg)
-        #   else
-        #     result = send("#{expr.f}".to_sym, arg)
-        #   end
-        #   result
-        # end
       when Fun
         arg = eval_expr(expr.arg, env)
         f = eval_expr(expr.f, env)
         f.call(arg)
       when Proc, Method
-        p expr
         arg = eval_expr(expr.arg, env)
         expr.f.call(arg)
       when App

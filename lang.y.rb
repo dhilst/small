@@ -1,5 +1,6 @@
 class Parser
   prechigh
+    left '|>'
     left '*' '/'
     left '+' '-'
     left '='
@@ -15,18 +16,19 @@ class Parser
   let_stmt : "let" WORD "=" expr_0 { LetStmt.new(val[1], val[3]) }
 
   expr_0 : fun | if_ | letin | expr_1
-  expr_1 : bin | expr_2 
-  expr_2 : app | expr_3
-  expr_3 : atom
+  expr_1 : bin | expr_5 
+  expr_5 : app | expr_10
+  expr_10 : atom
 
   if_ : "if" expr_0 "then" expr_0 "else" expr_0 { If.new(val[1], val[3], val[5]) }
-  fun : "fun" WORD  ":" typ_0 "=>" expr_0 { Fun.new(val[1], val[3], val[5]) }
-  app : expr_2 expr_3 { App.new(val[0], val[1]) }
+  fun : "fun" WORD ":" typ_0 "=>" expr_0 { Fun.new(val[1], val[3], val[5]) }
+  app : expr_5 expr_10 { App.new(val[0], val[1]) }
   bin : expr_1 "+" expr_1 { Bin.new(:+, val[0], val[2]) }
       | expr_1 "-" expr_1 { Bin.new(:-, val[0], val[2]) }
       | expr_1 "*" expr_1 { Bin.new(:*, val[0], val[2]) }
       | expr_1 "/" expr_1 { Bin.new(:"/", val[0], val[2]) }
       | expr_1 "=" expr_1 { Bin.new(:"==", val[0], val[2]) }
+      | expr_1 "|>" expr_1 { App.new(val[2], val[0]) }
   atom : WORD { val[0].to_sym } | const | hole | "(" expr_0 ")" { val[1] } | list
   list : "[]" | "[" items "]" { [val[1]].flatten }
   items : expr_0 | expr_0 "," items { [val[0], val[2]] }
@@ -48,7 +50,7 @@ end
 
 CONSTS = %w[true false unit]
 KEYWORDS = %w[def fun int if then else list let]
-SYMBOLS = %w(=> = [ ] ( ) : -> + - * / ; , ? $)
+SYMBOLS = %w(=> |> = [ ] ( ) : -> + - * / ; , ? $)
             .map { |x| Regexp.quote(x) }
 
 def readstring(s)
@@ -111,14 +113,25 @@ class If < Struct.new :cond, :then_, :else_; end
 class Bin < Struct.new :op, :a, :b; end
 class LetStmt < Struct.new :name, :value; end
 
+class Stdlib
+  def map(proc, args, env)
+    iterable, *_ = args
+    iterable.map { |x| proc.call(x) }
+  end
+end
+
 class Interpreter
   attr_accessor :ast
   def initialize(ast)
     @ast = ast
+    @stdlib = Stdlib.new
   end
 
   def eval
     eval_stmts(@ast, {})
+  rescue => e
+    raise if ENV["ADVLANG_DEBUG"]
+    puts "Error: #{e}"
   end
 
   private
@@ -156,34 +169,55 @@ class Interpreter
         eval_expr(expr.else_, env)
       end
     when Symbol
-      env[expr]
+      if env.key?(expr)
+        env[expr]
+      else
+        sym = expr.to_s
+        begin
+          if sym.include? "."
+            namespace, _, name = sym.partition(".")
+            result = Object.const_get(namespace).method(name)
+          else
+            result = Kernel.method(sym)
+          end
+        rescue NameError => e
+          fail "unbounded variable #{expr}"
+        end
+
+        result
+      end
     when App
       case expr.f
       when Symbol
-        if env.key?(expr.f)
-          f = env[expr.f]
-          arg = eval_expr(expr.arg, env)
-          eval_expr(App.new(f, arg), env)
-        else
-          arg = eval_expr(expr.arg, env)
-          fname = expr.f.to_s
-          if fname.include? "."
-            namespace, _, name = fname.partition(".")
-            result = Object.const_get(namespace).send(name, arg)
-          else
-            result = send("#{expr.f}".to_sym, arg)
-          end
-          result
-        end
+        f = eval_expr(expr.f, env)
+        eval_expr(App.new(f, expr.arg), env)
+        # if env.key?(expr.f)
+        #   f = env[expr.f]
+        #   arg = eval_expr(expr.arg, env)
+        #   eval_expr(App.new(f, arg), env)
+        # else
+        #   arg = eval_expr(expr.arg, env)
+        #   fname = expr.f.to_s
+        #   if fname.include? "."
+        #     namespace, _, name = fname.partition(".")
+        #     result = Object.const_get(namespace).send(name, arg)
+        #   else
+        #     result = send("#{expr.f}".to_sym, arg)
+        #   end
+        #   result
+        # end
       when Fun
         arg = eval_expr(expr.arg, env)
         f = eval_expr(expr.f, env)
         f.call(arg)
-      when Proc
+      when Proc, Method
         arg = eval_expr(expr.arg, env)
         expr.f.call(arg)
+      when App
+        f = eval_expr(expr.f, env)
+        eval_expr(App.new(f, expr.arg), env)
       else
-        fail "bad application #{expr}"
+        fail "bad application, did you forgot a ';'? #{expr}"
       end
     when Bin
       eval_bin_expr(expr.op, expr.a, expr.b, env)
@@ -219,4 +253,3 @@ end
 # interp.eval
 
 Parser.new.parse(ARGF.read).eval
-

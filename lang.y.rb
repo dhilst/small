@@ -60,10 +60,31 @@ SYMBOLS = %w(=> |> () = [ ] ( ) : -> + - * / ; , ? $ _)
 def readstring(s)
   acc = []
   loop do
-    x = s.scan_until(/"|\"/)
+    x = s.scan_until(/"|\\/)
     fail "unterminated string \"#{str}" if x.nil?
-    if x.end_with? '\"'
-      acc << x
+    if x.end_with? "\\"
+      acc << x[..-2]
+      nxt = s.getch()
+      case nxt
+      when "n"
+        acc << "\n"
+      when "t"
+        acc << "\t"
+      when "r"
+        acc << "\r"
+      when "\\"
+        acc << "\\"
+      when "b"
+        acc << "\b"
+      when "v"
+        acc << "\v"
+      when "0"
+        acc << "\0"
+      when '"'
+        acc << "\""
+      else
+        fail "unknown string escape \\#{nxt}"
+      end
     else
       acc << x[..-2]
       break
@@ -161,9 +182,6 @@ class Interpreter
 
   def eval_expr(expr, env)
     case expr
-    when String
-      puts "string #{expr.encode}"
-      return expr.encode
     when Integer, String, TrueClass, FalseClass
       return expr
     when Array

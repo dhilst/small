@@ -1,18 +1,20 @@
 class Parser
   prechigh
-    left '+'
+    left '*' '/'
+    left '+' '-'
+    left '='
   preclow
   token WORD INT TRUE FALSE UNIT STRING
   options no_result_var
   rule
   start: stmts { [val[0]].flatten }
 
-  stmts : stmt | stmt ";" stmts { [val[0], val[2]] }
-  stmt :  expr_0 | def_ 
+  stmts : stmt_0 | stmt_0 ";" stmts { [val[0], val[2]] }
+  stmt_0 : let_stmt | expr_0
 
-  def_ : "def" WORD "=" expr_0 { Def.new(val[1], val[3]) }
+  let_stmt : "let" WORD "=" expr_0 { LetStmt.new(val[1], val[3]) }
 
-  expr_0 : fun | if_ | expr_1
+  expr_0 : fun | if_ | letin | expr_1
   expr_1 : bin | expr_2 
   expr_2 : app | expr_3
   expr_3 : atom
@@ -20,11 +22,16 @@ class Parser
   if_ : "if" expr_0 "then" expr_0 "else" expr_0 { If.new(val[1], val[3], val[5]) }
   fun : "fun" WORD  ":" typ_0 "=>" expr_0 { Fun.new(val[1], val[3], val[5]) }
   app : expr_2 expr_3 { App.new(val[0], val[1]) }
-  bin : expr_1 "+" expr_1 { Bin.new("+", val[0], val[2]) }
+  bin : expr_1 "+" expr_1 { Bin.new(:+, val[0], val[2]) }
+      | expr_1 "-" expr_1 { Bin.new(:-, val[0], val[2]) }
+      | expr_1 "*" expr_1 { Bin.new(:*, val[0], val[2]) }
+      | expr_1 "/" expr_1 { Bin.new(:"/", val[0], val[2]) }
+      | expr_1 "=" expr_1 { Bin.new(:"==", val[0], val[2]) }
   atom : WORD { val[0].to_sym } | const | hole | "(" expr_0 ")" { val[1] } | list
   list : "[]" | "[" items "]" { [val[1]].flatten }
   items : expr_0 | expr_0 "," items { [val[0], val[2]] }
   const : INT | TRUE { true } | FALSE { false } | UNIT | STRING 
+  letin : "let" WORD "=" expr_0 "in" expr_0 { App.new(Fun.new(val[1], val[5]), val[3]) }
   hole : "?" { :hole }
 
   typ_0 : t_arrow | typ_1
@@ -40,7 +47,7 @@ end
 ---- inner
 
 CONSTS = %w[true false unit]
-KEYWORDS = %w[def fun int if then else list]
+KEYWORDS = %w[def fun int if then else list let]
 SYMBOLS = %w(=> = [ ] ( ) : -> + - * / ; , ? $)
             .map { |x| Regexp.quote(x) }
 
@@ -102,7 +109,7 @@ class Fun < Struct.new :arg, :typ, :body; end
 class App < Struct.new :f, :arg; end
 class If < Struct.new :cond, :then_, :else_; end
 class Bin < Struct.new :op, :a, :b; end
-class Def < Struct.new :name, :value; end
+class LetStmt < Struct.new :name, :value; end
 
 class Interpreter
   attr_accessor :ast
@@ -124,7 +131,7 @@ class Interpreter
 
   def eval_stmt(stmt, env)
     case stmt
-    when Def
+    when LetStmt
       value = eval_expr(stmt.value, env)
       env[stmt.name.to_sym] = value
     else
@@ -143,8 +150,7 @@ class Interpreter
     when Fun
       return ->(x) { eval_expr(expr.body, env.merge({ expr.arg.to_sym => x })) }
     when If
-      c, env = eval_expr(expr.cond, env)
-      if c
+      if eval_expr(expr.cond, env)
         eval_expr(expr.then_, env)
       else
         eval_expr(expr.else_, env)
@@ -161,7 +167,7 @@ class Interpreter
         else
           arg = eval_expr(expr.arg, env)
           fname = expr.f.to_s
-          if fname.include? "::"
+          if fname.include? "."
             namespace, _, name = fname.partition(".")
             result = Object.const_get(namespace).send(name, arg)
           else
@@ -173,31 +179,44 @@ class Interpreter
         arg = eval_expr(expr.arg, env)
         f = eval_expr(expr.f, env)
         f.call(arg)
+      when Proc
+        arg = eval_expr(expr.arg, env)
+        expr.f.call(arg)
       else
         fail "bad application #{expr}"
       end
+    when Bin
+      eval_bin_expr(expr.op, expr.a, expr.b, env)
     else
       fail "unknown expression #{expr}"
     end
   end
+
+  def eval_bin_expr(op, a, b, env)
+    a = eval_expr(a, env)
+    b = eval_expr(b, env)
+    eval_expr(a.send(op, b), env)
+  end
 end
 
 ---- footer
-interp = Parser.new.parse(<<END
-puts (if true then 1 else 0);
-def x = 100;
-puts x;
+# interp = Parser.new.parse(<<END
+# puts (if true then 1 else 0);
+# def x = 100;
+# puts x;
 
-# lets try some requests
-require "uri";
-require "net/http";
-def uri = URI("http://google.com");
-puts uri;
-p (Net::HTTP.get_response uri);
-(fun x : list (int -> int) => p x) 1;
-p [1,2,3,4]
-END
-)
-
+# # lets try some requests
+# require "uri";
+# require "net/http";
+# def uri = URI("http://google.com");
+# puts uri;
+# p (Net::HTTP.get_response uri);
+# (fun x : list (int -> int) => p x) 1;
+# p [1,2,3,4]
+# END
+# )
 # interp.ast.each(&method(:puts))
-interp.eval
+# interp.eval
+
+Parser.new.parse(ARGF.read).eval
+

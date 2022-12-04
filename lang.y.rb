@@ -14,6 +14,7 @@ class Parser
   stmt_0 : let_stmt | expr_0
 
   let_stmt : "let" WORD "=" expr_0 { LetStmt.new(val[1], val[3]) }
+           | "let" "_" "=" expr_0 { LetStmt.new(:_, val[3]) }
 
   expr_0 : fun | funm | if_ | letin | expr_1
   expr_1 : bin | expr_5 
@@ -36,8 +37,8 @@ class Parser
   list : "[]" | "[" items "]" { [val[1]].flatten }
   items : expr_0 | expr_0 "," items { [val[0], val[2]] }
   const : INT | TRUE { true } | FALSE { false } | UNIT | STRING
-  letin : "let" WORD "=" expr_0 "in" expr_0 { App.new(Fun.new(val[1], val[5]), val[3]) }
-  hole : "?" { :hole }
+  letin : "let" WORD "=" expr_0 "in" expr_0 { App.new(Fun.new(val[1], nil, val[5]), val[3]) }
+  hole : "?" { :question } | "_" { :under }
 
   typ_0 : t_arrow | typ_1
   typ_1 : t_app | typ_2
@@ -52,7 +53,7 @@ end
 ---- inner
 
 CONSTS = %w[true false unit]
-KEYWORDS = %w[def fun int if then else list let]
+KEYWORDS = %w[def fun int if then else list let in]
 SYMBOLS = %w(=> |> = [ ] ( ) : -> + - * / ; , ? $ _)
             .map { |x| Regexp.quote(x) }
 

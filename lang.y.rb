@@ -210,10 +210,15 @@ class Interpreter
               result = const.method(name)
             elsif const.instance_methods.include?(name)
               instance_method = const.instance_method(name)
-              if instance_method.arity == 0
-                result = Proc.new {|x| instance_method.bind(x).call }
+              case instance_method.owner
+              when Array
+                result = Proc.new {|x| instance_method.bind(x) }
               else
-                result = Proc.new {|x| instance_method.bind(x) }.curry
+                if instance_method.arity == 0
+                  result = Proc.new {|x| instance_method.bind(x).call }
+                else
+                  result = Proc.new {|x| instance_method.bind(x) }.curry
+                end
               end
             else
               fail "unbounded variable #{expr}"
@@ -236,6 +241,8 @@ class Interpreter
         arg = eval_expr(expr.arg, env)
         f = eval_expr(expr.f, env)
         f.call(arg)
+      when Enumerator
+        return expr.f.call
       when Proc, Method
         arg = eval_expr(expr.arg, env)
         expr.f.call(arg)

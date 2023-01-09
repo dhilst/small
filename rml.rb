@@ -349,6 +349,7 @@ class Typechecker
       sub: TypeScheme.new([], arrow(int, int, int)),
       add: TypeScheme.new([], arrow(int, int, int)),
       mul: TypeScheme.new([], arrow(int, int, int)),
+      not: TypeScheme.new([], arrow(bool, bool)),
       puts: TypeScheme.new([a], arrow(a, nilt)),
     }
     env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
@@ -452,6 +453,7 @@ class Interpreter
       mul: ->(a, b) { a * b }.curry,
       sub: ->(a, b) { a - b }.curry,
       eq: ->(a, b) { a == b }.curry,
+      not: ->(a) { not a }
     }
   end
 
@@ -506,46 +508,8 @@ class Interpreter
 end
 
 code = <<END
-val some = fun x => fun some => fun none =>
-  unify none (some x);
-val none = fun some => fun none =>
-  unify some (fun _ => none);
-
-match some 1 with
-| some x => true
-| none => false
-end;
-
-val ok = fun x => fun ok => fun err =>
-  unify err (fun _ => ok x);
-
-val err = fun x => fun ok => fun err =>
-  unify ok (fun _ => err x);
-
-match ok 1 with
-| ok x => true
-| error y => false
-end;
-
-match err true with
-| ok x => puts x
-| error y => puts y
-end;
-
-val bool_int = fun x => fun y => fun pair =>
-    pair (unify true x) (unify 0 y);
-
-val as_int = unify 0;
-val as_bool = unify true;
-
-fun x =>
-  if x then x else 0;
-  # this is wrong, it should be a type error
-  # x should have type int, and it's
-  # being used in if conditional position wich
-  # have to be bool
-
-  puts 1
+# val f = fun x => f x; # error : unbounded variable f
+val g = fun g => fun x => g g x # error 
 END
 
 ast = Desuger.new.desugar(Parser.new.parse(code))

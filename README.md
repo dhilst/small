@@ -324,11 +324,9 @@ rake
 ruby small.rb
 ```
 
-Right now the code is inlined inside `rml.rb` but this will change
-soon.
+This will run the REPL where you can type statements
 
 # TODO
 
-* Make a decent REPL
-* Parse/Run files
+* Parse/Run files (when stdin is not tty)
 

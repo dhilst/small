@@ -1,4 +1,5 @@
-require './parser'
+require "readline"
+require "./parser"
 
 # Receives an AST and return a simpler AST with only
 # Val, App, Lamb, Symbol (denoting variables) and constants
@@ -320,11 +321,17 @@ end
 class Typechecker
   def typecheck(stmts)
     env = global_env
-    stmts.each do |stmt|
+    stmts.map do |stmt|
       UVar.reset
-      stmt = typecheck_stmt(stmt, env)
-      stmt
+      stmt, t = typecheck_stmt(stmt, env)
+      [stmt, t]
     end
+  end
+
+  def typecheck_stmt_repl(stmt, env)
+    env = global_env if env.empty?
+    stmt, t = typecheck_stmt(stmt, env)
+    [stmt, t, env]
   end
 
   private
@@ -364,14 +371,12 @@ class Typechecker
       t = Unifier.substm(s, t)
       t = TypeScheme.generalize(t, env)
       env[stmt.name] = t
-      puts "#{stmt} : #{t}"
-      Val.new(stmt.name, val)
+      [Val.new(stmt.name, val), t, env]
     else
       t, stmt, s = typecheck_expr(stmt, env)
       t = Unifier.substm(s, t)
       t = TypeScheme.new([], t)
-      puts "#{stmt} : #{t}"
-      stmt 
+      [stmt, t, env]
     end
   end
 
@@ -437,6 +442,11 @@ class Interpreter
     eval_stmts(stmts, global_env)
   end
 
+  def eval_stmt_repl(stmt, env)
+    env = global_env if env.empty?
+    stmt, env = eval_stmt(stmt, env)
+  end
+
   private
 
   def fix(f, x)
@@ -468,8 +478,9 @@ class Interpreter
     when Val
       fail "bad name #{stmt.name} in #{stmt}" unless stmt.name.is_a? Symbol
       env[stmt.name] = stmt.value
+      [stmt.value, env]
     else
-      eval_expr(stmt, env)
+      [eval_expr(stmt, env), env]
     end
   end
 
@@ -507,14 +518,48 @@ class Interpreter
   end
 end
 
-code = <<END
-# val f = fun x => f x; # error : unbounded variable f
-val g = fun g => fun x => g g x # error 
-END
+class REPL
+  def initialize
+    @parser = Parser.new
+    @desuger = Desuger.new
+    @typechecker = Typechecker.new
+    @interpreter = Interpreter.new
+    @tenv = {}
+    @ienv = {}
+  end
 
-ast = Desuger.new.desugar(Parser.new.parse(code))
-puts "Typechecking\n\n"
-Typechecker.new.typecheck(ast)
+  def run
+    loop do
+      line = Readline.readline("> ", true)
+      next if line.nil?
+      next if line.empty?
+      break if line == "exit"
+      run_stmt_text(line)
+      UVar.reset
+    rescue StandardError => e
+      puts "Error : #{e}"
+    end
+  end
 
-puts "\n\nEvaluating\n\n"
-Interpreter.new.eval(ast)
+  private 
+
+  def run_stmt_text(stmt_text)
+    ast = @parser.parse(stmt_text)
+    ast = @desuger.desugar(ast)
+    ast.each do |stmt|
+      stmt, t, @tenv = @typechecker.typecheck_stmt_repl(stmt, @tenv)
+      value,  @ienv = @interpreter.eval_stmt_repl(stmt, @ienv)
+      if [Proc, Method].include?(value.class) || stmt.is_a?(Val)
+        puts "#{stmt} : #{t}"
+      else 
+        puts "#{value} : #{t}"
+      end
+    end
+  end
+end
+
+def main
+  REPL.new.run
+end
+
+main

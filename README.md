@@ -213,7 +213,7 @@ fun x => fun y => y # : a -> b -> b
 ```
 
 To remedy this there is a built-in function `unify : a -> a -> a`
-which returns it's second argument and you can use it to
+which returns its second argument and you can use it to
 express that two variables should have the same type.
 
 ```sml
@@ -223,8 +223,7 @@ fun y => fun x => unify y x # : a -> a -> a
 
 This is unsound as now you can have a function that accepts a
 `nil`. The built-in function `puts` has the type `forall a . a -> nil`
-and it is the ruby `puts` function. It will print to the standard
-output whatever you pass to it
+. It will print to the standard output whatever you pass to it.
 
 ```sml
 puts (add 1 2) # outputs 3 in the standard output
@@ -232,7 +231,7 @@ puts (add 1 2) # outputs 3 in the standard output
 
 With `puts` and `unify` you can declare a function that receives null,
 which I think is not a good idea and should be fixed in future. I
-didn't had any problems with `nil` yet, but it's more a implementation
+didn't had any problems with `nil`, yet, but it's more a implementation
 detail leaking and should be removed or restricted in future.
 
 ```sml
@@ -243,7 +242,7 @@ fun x => unify x (puts x) # nil -> nil
 
 Recursion brings unsoundness to the language. If you are using the
 language as a proof system then you can use recursion to prove anything.
-Because of this (and because Small intends to be as sound as possible)
+Because of this (and because small intends to be as sound as possible)
 recursion have to be explicitly enabled with `ENABLE_FIXPOINT` environment
 variable.
 
@@ -299,7 +298,7 @@ This also means that we have no recursive types
 * `nil` : Has no constructors, it is the return type of some built-in
   functions as `puts`
 * `a -> b` : A function type receive `a` type  and returning `b` type
-* `forall a . a -> b` : An universally quantified function, receiving
+* `forall a . a -> b` : An universaly quantified function, receiving
   any `a` and returning a fixed `b` (see [Universal quantification /
   Let polymorphism](#Universal-quantification-/-Let-polymorphism)
   
@@ -322,7 +321,7 @@ Use `rake` to build the `parser.rb` file, then `ruby rml.rb`
 
 ```shell
 rake
-ruby rml.rb
+ruby small.rb
 ```
 
 Right now the code is inlined inside `rml.rb` but this will change

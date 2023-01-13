@@ -3,7 +3,7 @@
 # Simple ML like language using Scott encoding
 
 class Parser
-  token WORD INT BOOL
+  token WORD INT BOOL STRING
   options no_result_var
 
   start main
@@ -34,7 +34,7 @@ class Parser
   lamb : "fun" WORD "=>" expr_0 { Lamb.new(val[1], nil, val[3]) }
   app : expr_1 expr_2 { App.new(val[0], val[1]) }
   atom : WORD | const | "(" expr_0 ")" { val[1] }
-  const : INT | BOOL
+  const : INT | BOOL | STRING
   let : "let" WORD "=" expr_0 "in" expr_0
       { Let.new(val[1], val[3], val[5]) }
   match : "match" expr_0 "with" patterns "end"
@@ -50,6 +50,23 @@ end
 ---- inner
 KEYWORDS = %w(data match with end let in fun val if then else true false)
 SYMBOLS = %w(=> | ; = ( ) :).map { |x| Regexp.quote(x) }
+
+
+def readstring(s)
+  acc = []
+  loop do
+    x = s.scan_until(/"|\"/)
+    fail "unterminated string \"#{str}" if x.nil?
+    if x.end_with? '\"'
+      acc << x
+    else
+      acc << x[..-2]
+      break
+    end
+  end
+  acc.join("")
+end
+
 def make_tokens str
   require 'strscan'
 
@@ -71,6 +88,8 @@ def make_tokens str
       else
         result << [tok, nil]
       end
+    when tok = s.scan(/"/)
+      result << [:STRING, readstring(s)]
     when tok = s.scan(/\d+/)
       result << [:INT, tok.to_i]
     when tok = s.scan(/\w+/)

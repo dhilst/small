@@ -48,7 +48,7 @@ class Desuger
 
   def desugar_expr(expr)
     case expr
-    when Integer, Symbol, TrueClass, FalseClass, If
+    when Integer, Symbol, TrueClass, FalseClass, If, String
       expr
     when App
       App.new(desugar_expr(expr.f), desugar_expr(expr.arg))
@@ -126,6 +126,8 @@ class Unparser
     case expr
     when Integer, Symbol, TrueClass, FalseClass
       expr.to_s
+    when String
+      expr.dump
     when Let
       "let #{expr.x} = #{unparse_expr(expr.e1)} in #{unparse_expr(expr.e2)}"
     when Lamb
@@ -360,6 +362,7 @@ class Typechecker
     int = UFun.new(:int, [])
     nilt = UFun.new(:nil, [])
     bool = UFun.new(:bool, [])
+    str = UFun.new(:string, [])
     a = UVar.fresh!
     b = UVar.fresh!
     env = {
@@ -370,6 +373,7 @@ class Typechecker
       mul: TypeScheme.new([], arrow(int, int, int)),
       not: TypeScheme.new([], arrow(bool, bool)),
       puts: TypeScheme.new([a], arrow(a, nilt)),
+      readfile: TypeScheme.new([], arrow(str, str))
     }
     env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
                               if ENV["ENABLE_FIXPOINT"]
@@ -394,9 +398,10 @@ class Typechecker
 
   def typecheck_expr(expr, env)
     case expr
-    when String, NilClass
-      name = expr.class.name.downcase.sub(/class/, "")
-      [UFun.new(name, []), expr, []]
+    when NilClass
+      [UFun.new(:nil, []), expr, []]
+    when String
+      [UFun.new(:string, []), expr, []]
     when Integer
       [UFun.new(:int, []), expr, []]
     when TrueClass, FalseClass
@@ -475,6 +480,7 @@ class Interpreter
       mul: ->(a, b) { a * b }.curry,
       sub: ->(a, b) { a - b }.curry,
       eq: ->(a, b) { a == b }.curry,
+      readfile: ->(a) { File.read(a) },
       not: ->(a) { not a }
     }
   end
@@ -533,6 +539,7 @@ end
 class REPL
   def initialize
     @parser = Parser.new
+    @unparser = Unparser.new
     @desuger = Desuger.new
     @typechecker = Typechecker.new
     @interpreter = Interpreter.new
@@ -547,9 +554,9 @@ class REPL
       next if line.empty?
       break if line == "exit"
       run_stmt_text(line)
-    rescue StandardError => e
-      raise
-      puts "Error : #{e}"
+    # rescue StandardError => e
+    #   puts "Error : #{e}"
+    #   raise if ENV[:THROW_ERROR]
     end
   end
 
@@ -564,7 +571,7 @@ class REPL
       if [Proc, Method].include?(value.class) || stmt.is_a?(Val)
         puts "#{stmt} : #{t}"
       else 
-        puts "#{value} : #{t}"
+        puts "#{@unparser.unparse([value])} : #{t}"
       end
     end
   end

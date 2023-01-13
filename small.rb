@@ -414,13 +414,13 @@ class Typechecker
       [tresult.args[1], app, sfunc2]
     when If
       tcond, cond, scond = typecheck_expr(expr.cond, env)
-      Unifier.unify([[tcond, UFun.new(:bool, [])]])
+      scond2 = Unifier.unify([[tcond, UFun.new(:bool, [])]])
       tthen, then_, sthen = typecheck_expr(expr.then_, env)
       telse, else_, selse = typecheck_expr(expr.else_, env)
-      sthenelse = unify(expr, [[tthen, telse]] + scond + sthen + selse)
+      sthenelse = unify(expr, [[tthen, telse]] + sthen + selse)
       tif = Unifier.substm(sthenelse, tthen)
       if_ = If.new(cond, then_, else_)
-      [tif, if_, sthenelse]
+      [tif, if_, sthenelse + scond2]
     else
       # PS in [let x = ... in ...], [x] is not universally
       # quantified. [let] is just sugar for application, only [val x =

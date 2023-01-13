@@ -312,6 +312,19 @@ class TypeScheme < Struct.new :args, :typ
     end
   end
 
+  # replace the type variables with new variables
+  # in alphabetical order, so forall e h . e -> (e -> h) -> h
+  # becomes forall a b -> a -> (a -> b) -> b
+  def normalize
+    s = "a"
+    new_args = args.map { x = s.dup; s.next!; UVar.new(x) }
+    vs = TypeScheme.vars(typ).reject { |x| args.include? x }
+    new_vs = vs.map { x = s.dup; s.next!; UVar.new(x) }
+    p 
+    ss = (args + vs).uniq.zip(new_args + new_vs)
+    TypeScheme.new(new_args, Unifier.substm(ss, typ))
+  end
+
   def to_s
     return typ.to_s if args.empty?
     "forall #{args.join(' ')} . #{typ}"
@@ -322,7 +335,6 @@ class Typechecker
   def typecheck(stmts)
     env = global_env
     stmts.map do |stmt|
-      UVar.reset
       stmt, t = typecheck_stmt(stmt, env)
       [stmt, t]
     end
@@ -369,13 +381,13 @@ class Typechecker
     when Val
       t, val, s = typecheck_expr(stmt.value, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.generalize(t, env)
+      t = TypeScheme.generalize(t, env).normalize
       env[stmt.name] = t
       [Val.new(stmt.name, val), t, env]
     else
       t, stmt, s = typecheck_expr(stmt, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.new([], t)
+      t = TypeScheme.new([], t).normalize
       [stmt, t, env]
     end
   end
@@ -420,7 +432,7 @@ class Typechecker
       sthenelse = unify(expr, [[tthen, telse]] + sthen + selse)
       tif = Unifier.substm(sthenelse, tthen)
       if_ = If.new(cond, then_, else_)
-      [tif, if_, sthenelse + scond2]
+      [tif, if_, sthenelse + scond + scond2]
     else
       # PS in [let x = ... in ...], [x] is not universally
       # quantified. [let] is just sugar for application, only [val x =
@@ -535,8 +547,8 @@ class REPL
       next if line.empty?
       break if line == "exit"
       run_stmt_text(line)
-      UVar.reset
     rescue StandardError => e
+      raise
       puts "Error : #{e}"
     end
   end

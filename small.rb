@@ -209,19 +209,12 @@ end
 class UVar < UVarBase
   @@next_letter = "a"
 
-  attr_reader :letter
-
-  def initialize(letter)
-    fail if letter.size > 1
-    @letter = letter.dup
-  end
-
   def to_s
-    "#{@letter}"
+    "#{letter}"
   end
 
   def self.fresh!
-    l = @@next_letter
+    l = @@next_letter.dup
     @@next_letter.next!
     UVar.new(l)
   end
@@ -232,7 +225,7 @@ class UVar < UVarBase
 
   def ==(b)
     fail "invalid comparison #{self} == #{b}" unless b.is_a? UVar
-    @letter == b.letter
+    letter == b.letter
   end
 end
 
@@ -332,23 +325,24 @@ class TypeScheme < TypeSchemeBase
       fail "invalid argument #{typ.class} <---"
     end
   end
-
   # replace the type variables with new variables
   # in alphabetical order, so forall e h . e -> (e -> h) -> h
   # becomes forall a b -> a -> (a -> b) -> b
   def normalize
-    s = "a"
-    new_args = args.map { x = s.dup; s.next!; UVar.new(x) }
-    vs = TypeScheme.vars(typ).reject { |x| args.include? x }
-    new_vs = vs.map { x = s.dup; s.next!; UVar.new(x) }
-    p 
-    ss = (args + vs).uniq.zip(new_args + new_vs)
-    TypeScheme.new(new_args, Unifier.substm(ss, typ))
+    vars_ = TypeScheme.vars(typ).reject {|x| args.include?(x) }
+    args_ = args + vars_
+    subst = args_.zip(alpha)
+    new_args = subst.take(args.size).map {|x| x[1]}
+    TypeScheme.new(new_args, Unifier.substm(subst, typ))
   end
 
   def to_s
     return typ.to_s if args.empty?
     "forall #{args.join(' ')} . #{typ}"
+  end
+
+  def alpha
+    ('a'..'z').to_a.map(&UVar.method(:new))
   end
 end
 
@@ -404,13 +398,13 @@ class Typechecker
     when Val
       t, val, s = typecheck_expr(stmt.value, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.generalize(t, env)
+      t = TypeScheme.generalize(t, env).normalize
       env[stmt.name] = t
       [Val.new(stmt.name, val), t, env]
     else
       t, stmt, s = typecheck_expr(stmt, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.new([], t)
+      t = TypeScheme.new([], t).normalize
       [stmt, t, env]
     end
   end
@@ -605,9 +599,13 @@ class REPL
     FileUtils.touch(history_path) unless File.exist?(history_path)
     Readline::HISTORY.push(*File.readlines(history_path))
     loop do
-      line = Readline.readline("> ", true)
-      next if line.nil?
-      next if line.empty?
+      line = Readline.readline("> ", true)&.rstrip
+      if line.empty?
+        Readline::HISTORY.pop
+        next
+      elsif line == Readline::HISTORY.to_a.last
+        Readline::HISTORY.pop
+      end
       break if line == "exit"
       run_stmt_text(line)
     rescue Interrupt
@@ -622,15 +620,30 @@ class REPL
   private 
 
   def run_stmt_text(stmt_text)
-    ast = @parser.parse(stmt_text)
-    ast = @desuger.desugar(ast)
-    ast.each do |stmt|
-      stmt, t, @tenv = @typechecker.typecheck_stmt_repl(stmt, @tenv)
-      value,  @ienv = @interpreter.eval_stmt_repl(stmt, @ienv)
-      if [Proc, Method].include?(value.class) || stmt.is_a?(Val)
-        puts "#{stmt} : #{t}"
-      else 
-        puts "#{@unparser.unparse([value])} : #{t}"
+    if stmt_text == "reset vars"
+      UVar.reset!
+    elsif stmt_text == "ienv"
+      pp @ienv
+    elsif stmt_text == "tenv"
+      pp @tenv
+    else
+      ast = @parser.parse(stmt_text)
+      ast = @desuger.desugar(ast)
+      ast.each do |stmt|
+        case stmt
+        when Symbol
+          fail "unbounded variable #{stmt}" unless @tenv.key? stmt
+          t = @tenv[stmt]
+          puts "#{stmt} : #{t}"
+        else
+          stmt, t, @tenv = @typechecker.typecheck_stmt_repl(stmt, @tenv)
+          value,  @ienv = @interpreter.eval_stmt_repl(stmt, @ienv)
+          if [Proc, Method].include?(value.class) || stmt.is_a?(Val)
+            puts "#{stmt} : #{t}"
+          else 
+            puts "#{@unparser.unparse([value])} : #{t}"
+          end
+        end
       end
     end
   end
@@ -644,4 +657,6 @@ def main
   end
 end
 
-main
+if __FILE__ == $0 # hacky for debugging in irb
+  main
+end

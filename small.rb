@@ -55,8 +55,7 @@ class Desuger
     when App
       App.new(desugar_expr(expr.f), desugar_expr(expr.arg))
     when Lamb
-      typ = desugar_typ(expr.typ) if expr.typ
-      Lamb.new(expr.arg, typ, desugar_expr(expr.body))
+      Lamb.new(expr.arg, expr.typ, desugar_expr(expr.body))
     when Let
       # let x = e1 in e2 ~> (fun x => e2) e1
       App.new(
@@ -83,19 +82,6 @@ class Desuger
       app(expr.scrutinee, *branches)
     else
       fail "desugar error : bad expr #{expr}"
-    end
-  end
-
-  def desugar_typ(typ)
-    case typ
-    when UVarBase
-      UVar.new(typ.letter)
-    when UFunBase
-      UFun.new(typ.name, typ.args.map {|t| desugar_typ(t)} )
-    when TypeSchemeBase
-      TypeScheme.new(typ.args, desugar_typ(typ.typ))
-    else
-      fail "invalid argument #{typ}"
     end
   end
 end
@@ -149,17 +135,19 @@ class Unparser
     when Lamb
       "fun #{expr.arg} => #{unparse_expr(expr.body)}"
     when App
-      case expr.arg
-      when App, Lamb, Let
-        "#{unparse_expr(expr.f)} (#{unparse_expr(expr.arg)})"
-      else
-        case expr.f
-        when Lamb
-          "(#{unparse_expr(expr.f)}) #{unparse_expr(expr.arg)}"
-        else
-          "#{unparse_expr(expr.f)} #{unparse_expr(expr.arg)}"
-        end
-      end
+      f = case expr.f
+          when App, Lamb, Let
+              "(#{unparse_expr(expr.f)})"
+          else
+            unparse_expr(expr.f)
+          end
+      arg = case expr.arg
+            when App, Lamb, Let
+              "(#{unparse_expr(expr.arg)})"
+            else
+              unparse_expr(expr.arg)
+            end
+      "#{f} #{arg}"
     when Match
       "match #{unparse_expr(expr.scrutinee)} with\n" +
         unparse_match_patterns(expr.patterns)
@@ -188,7 +176,7 @@ class Unparser
   end
 end
 
-class UFun < UFunBase
+class UFun
   def to_s
     return "#{name}" if args.empty?
 
@@ -206,7 +194,7 @@ class UFun < UFunBase
   end
 end
 
-class UVar < UVarBase
+class UVar
   @@next_letter = "a"
 
   def to_s
@@ -224,7 +212,7 @@ class UVar < UVarBase
   end
 
   def ==(b)
-    fail "invalid comparison #{self} == #{b}" unless b.is_a? UVar
+    fail "invalid comparison #{self} == #{b.class}" unless b.is_a? UVar
     letter == b.letter
   end
 end
@@ -280,6 +268,11 @@ class Unifier
     when UVar
       return v if term == k
       term
+    when TypeScheme
+      return term if term.args.include? k
+      subst(k, v, term.typ)
+    else
+      fail "invalid argument #{k} #{v} #{term}"
     end
   end
 
@@ -298,7 +291,7 @@ class Unifier
   end
 end
 
-class TypeScheme < TypeSchemeBase
+class TypeScheme
   def instantiate
     fresh_vars = args.map do |arg|
       [arg, UVar.fresh!]
@@ -356,9 +349,28 @@ class Typechecker
   end
 
   def typecheck_stmt_repl(stmt, env)
-    env = global_env if env.empty?
     stmt, t = typecheck_stmt(stmt, env)
     [stmt, t, env]
+  end
+
+  def global_env
+    int = UFun.new(:int, [])
+    bool = UFun.new(:bool, [])
+    str = UFun.new(:string, [])
+    a = UVar.fresh!
+    b = UVar.fresh!
+    env = {
+      eq: TypeScheme.new([a], arrow(a, a, bool)),
+      sub: TypeScheme.new([], arrow(int, int, int)),
+      add: TypeScheme.new([], arrow(int, int, int)),
+      mul: TypeScheme.new([], arrow(int, int, int)),
+      not: TypeScheme.new([], arrow(bool, bool)),
+      puts: TypeScheme.new([a], arrow(a, a)),
+      readfile: TypeScheme.new([], arrow(str, str))
+    }
+    env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
+                              if ENV["ENABLE_FIXPOINT"]
+    env
   end
 
   private
@@ -371,29 +383,8 @@ class Typechecker
     end
   end
 
-  def global_env
-    int = UFun.new(:int, [])
-    nilt = UFun.new(:nil, [])
-    bool = UFun.new(:bool, [])
-    str = UFun.new(:string, [])
-    a = UVar.fresh!
-    b = UVar.fresh!
-    env = {
-      unify: TypeScheme.new([a], arrow(a, a, a)),
-      eq: TypeScheme.new([a], arrow(a, a, bool)),
-      sub: TypeScheme.new([], arrow(int, int, int)),
-      add: TypeScheme.new([], arrow(int, int, int)),
-      mul: TypeScheme.new([], arrow(int, int, int)),
-      not: TypeScheme.new([], arrow(bool, bool)),
-      puts: TypeScheme.new([a], arrow(a, nilt)),
-      readfile: TypeScheme.new([], arrow(str, str))
-    }
-    env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
-                              if ENV["ENABLE_FIXPOINT"]
-    env
-  end
-
   def typecheck_stmt(stmt, env)
+    UVar.reset!
     case stmt
     when Val
       t, val, s = typecheck_expr(stmt.value, env)
@@ -404,15 +395,13 @@ class Typechecker
     else
       t, stmt, s = typecheck_expr(stmt, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.new([], t).normalize
+      t = TypeScheme.new([], t)
       [stmt, t, env]
     end
   end
 
   def typecheck_expr(expr, env)
     case expr
-    when NilClass
-      [UFun.new(:nil, []), expr, []]
     when String
       [UFun.new(:string, []), expr, []]
     when Integer
@@ -424,6 +413,8 @@ class Typechecker
       [env[expr].instantiate, expr, []]
     when Lamb
       if expr.typ
+        # fun f : forall a . a -> a => fun p => p f f
+        # 
         targ = expr.typ
       else
         targ = UVar.fresh!
@@ -446,6 +437,7 @@ class Typechecker
         tfunc, f, sfunc = typecheck_expr(expr.f, env)
         targ, arg, sarg = typecheck_expr(expr.arg, env)
         tfunc2 = UFun.new(:arrow, [targ, UVar.fresh!])
+        tfunc = tfunc.instantiate if tfunc.is_a? TypeScheme
         sfunc2 = unify(expr, [[tfunc, tfunc2]] + sfunc + sarg)
         tresult = Unifier.substm(sfunc2, tfunc2)
         app = App.new(f, arg)
@@ -482,21 +474,12 @@ class Interpreter
   end
 
   def eval_stmt_repl(stmt, env)
-    env = global_env if env.empty?
     stmt, env = eval_stmt(stmt, env)
-  end
-
-  private
-
-  def fix(f, x)
-    fixm = method(:fix).curry
-    f.call(fixm.call(f)).call(x)
   end
 
   def global_env
     {
-      unify: ->(a, b){ b }.curry,
-      puts: method(:puts),
+      puts: ->(a) { puts a; a },
       fix: method(:fix).curry,
       add: ->(a, b) { a + b }.curry,
       mul: ->(a, b) { a * b }.curry,
@@ -505,6 +488,13 @@ class Interpreter
       readfile: ->(a) { File.read(a) },
       not: ->(a) { not a }
     }
+  end
+
+  private
+
+  def fix(f, x)
+    fixm = method(:fix).curry
+    f.call(fixm.call(f)).call(x)
   end
 
   def eval_stmts(stmts, env)
@@ -587,8 +577,8 @@ class REPL
     @desuger = Desuger.new
     @typechecker = Typechecker.new
     @interpreter = Interpreter.new
-    @tenv = {}
-    @ienv = {}
+    @tenv = @typechecker.global_env
+    @ienv = @interpreter.global_env
   end
 
   def history_path

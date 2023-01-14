@@ -47,12 +47,12 @@ class Parser
   pattern : "|" pat "=>" expr_0 { MatchPattern.new(val[1], val[3]) }
   pat : WORD pat { [val[0], val[1]].flatten } | WORD
 
-  typ_scheme : "forall" typ_args "." typ_expr { TypeSchemeBase.new(val[1], val[3]) }
+  typ_scheme : "forall" typ_args "." typ_expr { TypeScheme.new(val[1], val[3]) }
              | typ_expr
-  typ_args : WORD typ_args { [val[0], val[1]].flatten } 
-           | WORD { [val[0].to_s] }
+  typ_args : WORD typ_args { [UVar.new(val[0].to_s), val[1]].flatten } 
+           | WORD { [UVar.new(val[0].to_s)] }
   typ_expr : typ_arrow | typ_base
-  typ_arrow : typ_base "->" typ_expr { UFunBase.new(:arrow, [val[0], val[2]]) }
+  typ_arrow : typ_base "->" typ_expr { UFun.new(:arrow, [val[0], val[2]]) }
   typ_base : WORD { typ_var_of_sym(val[0]) } | "(" typ_expr ")" { val[1] }
 end
 
@@ -62,9 +62,9 @@ SYMBOLS = %w(=> -> . | ; = ( ) :).map { |x| Regexp.quote(x) }
 
 def typ_var_of_sym(val)
   if val.size == 1
-    UVarBase.new(val.to_s)
+    UVar.new(val.to_s)
   else
-    UFunBase.new(val.to_s, [])
+    UFun.new(val.to_s, [])
   end
 end
 
@@ -141,6 +141,6 @@ class Val < Struct.new :name, :value; def to_s; Unparser.new.unparse([self]); en
 class Match < Struct.new :scrutinee, :patterns; def to_s; Unparser.new.unparse([self]); end; end
 class MatchPattern < Struct.new :pat, :body; def to_s; Unparser.new.unparse([self]); end; end
 class If < Struct.new :cond, :then_, :else_; def to_s; Unparser.new.unparse([self]); end; end
-class TypeSchemeBase < Struct.new :args, :typ; end
-class UVarBase < Struct.new :letter; end
-class UFunBase < Struct.new :name, :args; end
+class TypeScheme < Struct.new :args, :typ; end
+class UVar < Struct.new :letter; end
+class UFun < Struct.new :name, :args; end

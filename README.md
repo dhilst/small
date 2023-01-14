@@ -116,14 +116,10 @@ Is sugar to:
 (fun x => x) 1
 ```
 
-# HM Type System
+# HM Type System / Type inference
 
 If you don't know what is a Hidley-Milner typesytem I recomend
 the [wikipedia](https://en.wikipedia.org/wiki/Hindley%E2%80%93Milner_type_system) page.
-
-You cannot express types in _small_, yet all the types are
-infered. The type inference runs over the core language,
-after the desugaring the source code. Examples:
 
 _types are shown as comments after `:`_ 
 
@@ -132,7 +128,7 @@ fun x => x # : a -> a
 fun x => fun y => x # : a -> b -> a
 ```
 
-`... -> ...` are function types, `a b c ... z` are type variables and.
+`... -> ...` are function types, `a b c ... z` are type variables.
 
 When you use a variable in a place that requires a specific type the
 variable will be infered to have that type, and further uses of it
@@ -202,40 +198,14 @@ This is not the case here, `let` expressions has exactly the same
 semantics that function application, in fact at typechecking time the
 `let` expressions were already desugared to function application.
 
-## Unification
+## Type constraints
 
-As you cannot express types in the grammar of the language, because of 
-this you cannot easily define a function with the type `a -> a -> a`.
-
-```sml
-fun x => fun y => x # : a -> b -> a
-fun x => fun y => y # : a -> b -> b
-```
-
-To remedy this there is a built-in function `unify : a -> a -> a`
-which returns its second argument and you can use it to
-express that two variables should have the same type.
+You can use type constraints to express that some arguments should have
+the same type, example
 
 ```sml
-fun x => fun y => unify y x # : a -> a -> a
-fun y => fun x => unify y x # : a -> a -> a
-```
-
-This is unsound as now you can have a function that accepts a
-`nil`. The built-in function `puts` has the type `forall a . a -> nil`
-. It will print to the standard output whatever you pass to it.
-
-```sml
-puts (add 1 2) # outputs 3 in the standard output
-```
-
-With `puts` and `unify` you can declare a function that receives null,
-which I think is not a good idea and should be fixed in future. I
-didn't had any problems with `nil`, yet, but it's more a implementation
-detail leaking and should be removed or restricted in future.
-
-```sml
-fun x => unify x (puts x) # nil -> nil
+fun x : a => fun y : a => x # forall a . a -> a -> a
+fun x : int => fun y => x # forall a . int -> a -> int
 ```
 
 ## Recursion
@@ -312,6 +282,7 @@ This also means that we have no recursive types
   is only reliable to use with `int` and `bool` for now
 * `not : bool -> bool` returns the negation of its input
 * `unify : a -> a -> a` returns its second argument and can be used to
+  (deprecated)
   restrict two variables to the same type
 * `puts : a -> nil` the `puts` function from ruby, mainly for debug
 
@@ -324,9 +295,19 @@ rake
 ruby small.rb
 ```
 
-This will run the REPL where you can type statements
+This will run the REPL where you can type statements. This is
+using readline and saving history to `~/.small_history`,
+you have readline emacs like bindings by default and can
+access the history with `Ctrl-P`. You can exit the REPL
+by pressing `Ctrl-C`
+
+You can also run file by redirecting it to `small.rb`
+
+```
+ruby small.rb < somefile
+```
 
 # TODO
 
-* Parse/Run files (when stdin is not tty)
+* Make `data` keyword use type constraints
 

@@ -614,7 +614,7 @@ class REPL
       break
     rescue StandardError => e
       puts "Error : #{e}"
-      raise if ENV[:THROW_ERROR]
+      raise if ENV['THROW_ERROR']
     end
     File.write(history_path, Readline::HISTORY.to_a.join("\n"))
   end

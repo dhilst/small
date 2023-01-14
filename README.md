@@ -1,13 +1,13 @@
-# small
+# Small
 
-_small_ is a ML language, like SML and OCaml featuring Algebraic Data Types
+_Small_ is a ML language, like SML and OCaml featuring Algebraic Data Types
 encoded as functions using Scott Encoding, and HM type system.
 
-_small_ because it's a small ML and the pronunciation is close to SML
+_Small_ because it's a small ML and the pronunciation is close to SML
 
 # Basic structure
 
-Programs in _small_ are a sequence of statements separated by `;`, please
+Programs in _Small_ are a sequence of statements separated by `;`, please
 note that a leading `;` is considered a syntax error. Statements in turn may
 contain expressions, there are two statements for now, `val` and `data`, more
 about this next. You can also use `#` to start line comments, comments
@@ -102,6 +102,10 @@ is sugar for
 x (fun y => y) 0
 ```
 
+_Obs : Since the type of `some` is infered to `forall a b c . a -> (a
+-> b) -> c -> b` the match expression branches may return distinct
+types. This is counterintuitive and is being resolved.
+
 ## Let expressions
 
 Let expressions are sugar also function application, example:
@@ -118,8 +122,9 @@ Is sugar to:
 
 # HM Type System / Type inference
 
-If you don't know what is a Hidley-Milner typesytem I recomend
-the [wikipedia](https://en.wikipedia.org/wiki/Hindley%E2%80%93Milner_type_system) page.
+If you don't know what is a Hidley-Milner typesytem I recomend the
+[wikipedia](https://en.wikipedia.org/wiki/Hindley%E2%80%93Milner_type_system)
+page.
 
 _types are shown as comments after `:`_ 
 
@@ -201,18 +206,21 @@ semantics that function application, in fact at typechecking time the
 ## Type constraints
 
 You can use type constraints to express that some arguments should have
-the same type, example
+the same type, example.
 
 ```sml
 fun x : a => fun y : a => x # forall a . a -> a -> a
 fun x : int => fun y => x # forall a . int -> a -> int
 ```
 
+Type variables must have a single letter, type constants
+must have two or more letters.
+
 ## Recursion
 
 Recursion brings unsoundness to the language. If you are using the
 language as a proof system then you can use recursion to prove anything.
-Because of this (and because small intends to be as sound as possible)
+Because of this (and because _Small_ intends to be as sound as possible)
 recursion have to be explicitly enabled with `ENABLE_FIXPOINT` environment
 variable.
 
@@ -281,9 +289,6 @@ This also means that we have no recursive types
   are equal. Since this compiles down to `Object.==` call in ruby it
   is only reliable to use with `int` and `bool` for now
 * `not : bool -> bool` returns the negation of its input
-* `unify : a -> a -> a` returns its second argument and can be used to
-  (deprecated)
-  restrict two variables to the same type
 * `puts : a -> nil` the `puts` function from ruby, mainly for debug
 
 # Running
@@ -310,4 +315,10 @@ ruby small.rb < somefile
 # TODO
 
 * Make `data` keyword use type constraints
+* Remove `nil` type, make puts return its argument
+* Add a `result` and `list` type and bootstrap a stdlib,
+  in a way that is easy to extend. It must be typed but
+  it may needed to be (partially or not) implemented in
+  _Ruby_. _Ruby_ things should not leak to _Small_, exceptions
+  for example should be converted to `result` values
 

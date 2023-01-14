@@ -32,6 +32,7 @@ class Parser
   expr_2 : atom
 
   lamb : "fun" WORD "=>" expr_0 { Lamb.new(val[1], nil, val[3]) }
+       | "fun" WORD ":" typ_scheme "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
   app : expr_1 expr_2 { App.new(val[0], val[1]) }
   atom : WORD | const | "(" expr_0 ")" { val[1] }
   const : INT | BOOL | STRING
@@ -45,12 +46,27 @@ class Parser
            | pattern
   pattern : "|" pat "=>" expr_0 { MatchPattern.new(val[1], val[3]) }
   pat : WORD pat { [val[0], val[1]].flatten } | WORD
+
+  typ_scheme : "forall" typ_args "." typ_expr { TypeSchemeBase.new(val[1], val[3]) }
+             | typ_expr
+  typ_args : WORD typ_args { [val[0], val[1]].flatten } 
+           | WORD { [val[0]] }
+  typ_expr : typ_arrow | typ_base
+  typ_arrow : typ_base "->" typ_expr { UFunBase.new(:arrow, [val[0], val[2]]) }
+  typ_base : WORD { typ_var_of_sym(val[0]) } | "(" typ_expr ")" { val[1] }
 end
 
 ---- inner
-KEYWORDS = %w(data match with end let in fun val if then else true false)
-SYMBOLS = %w(=> | ; = ( ) :).map { |x| Regexp.quote(x) }
+KEYWORDS = %w(data match with end let in fun val if then else true false forall)
+SYMBOLS = %w(=> -> . | ; = ( ) :).map { |x| Regexp.quote(x) }
 
+def typ_var_of_sym(val)
+  if val.size == 1
+    UVarBase.new(val)
+  else
+    UFunBase.new(val, [])
+  end
+end
 
 def readstring(s)
   acc = []
@@ -125,3 +141,6 @@ class Val < Struct.new :name, :value; def to_s; Unparser.new.unparse([self]); en
 class Match < Struct.new :scrutinee, :patterns; def to_s; Unparser.new.unparse([self]); end; end
 class MatchPattern < Struct.new :pat, :body; def to_s; Unparser.new.unparse([self]); end; end
 class If < Struct.new :cond, :then_, :else_; def to_s; Unparser.new.unparse([self]); end; end
+class TypeSchemeBase < Struct.new :args, :typ; end
+class UVarBase < Struct.new :letter; end
+class UFunBase < Struct.new :name, :args; end

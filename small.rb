@@ -1,5 +1,7 @@
 require "readline"
+require "fileutils"
 require "./parser"
+
 
 # Receives an AST and return a simpler AST with only
 # Val, App, Lamb, Symbol (denoting variables) and constants
@@ -53,7 +55,8 @@ class Desuger
     when App
       App.new(desugar_expr(expr.f), desugar_expr(expr.arg))
     when Lamb
-      Lamb.new(expr.arg, expr.typ, desugar_expr(expr.body))
+      typ = desugar_typ(expr.typ) if expr.typ
+      Lamb.new(expr.arg, typ, desugar_expr(expr.body))
     when Let
       # let x = e1 in e2 ~> (fun x => e2) e1
       App.new(
@@ -80,6 +83,19 @@ class Desuger
       app(expr.scrutinee, *branches)
     else
       fail "desugar error : bad expr #{expr}"
+    end
+  end
+
+  def desugar_typ(typ)
+    case typ
+    when UVarBase
+      UVar.new(typ.letter)
+    when UFunBase
+      UFun.new(typ.name, typ.args.map {|t| desugar_typ(t)} )
+    when TypeSchemeBase
+      TypeScheme.new(typ.args, desugar_typ(typ.typ))
+    else
+      fail "invalid argument #{typ}"
     end
   end
 end
@@ -172,7 +188,7 @@ class Unparser
   end
 end
 
-class UFun < Struct.new :name, :args
+class UFun < UFunBase
   def to_s
     return "#{name}" if args.empty?
 
@@ -190,12 +206,13 @@ class UFun < Struct.new :name, :args
   end
 end
 
-class UVar
+class UVar < UVarBase
   @@next_letter = "a"
 
   attr_reader :letter
 
   def initialize(letter)
+    fail if letter.size > 1
     @letter = letter.dup
   end
 
@@ -209,7 +226,7 @@ class UVar
     UVar.new(l)
   end
 
-  def self.reset
+  def self.reset!
     @@next_letter = "a"
   end
 
@@ -288,7 +305,7 @@ class Unifier
   end
 end
 
-class TypeScheme < Struct.new :args, :typ
+class TypeScheme < TypeSchemeBase
   def instantiate
     fresh_vars = args.map do |arg|
       [arg, UVar.fresh!]
@@ -309,8 +326,10 @@ class TypeScheme < Struct.new :args, :typ
       typ.args.map do |arg|
         vars(arg)
       end.flatten.uniq.sort_by(&:to_s)
+    when TypeScheme
+      vars(typ.typ).reject { |x| typ.args.include? x }
     else
-      fail "invalid argument #{typ}"
+      fail "invalid argument #{typ.class} <---"
     end
   end
 
@@ -385,13 +404,13 @@ class Typechecker
     when Val
       t, val, s = typecheck_expr(stmt.value, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.generalize(t, env).normalize
+      t = TypeScheme.generalize(t, env)
       env[stmt.name] = t
       [Val.new(stmt.name, val), t, env]
     else
       t, stmt, s = typecheck_expr(stmt, env)
       t = Unifier.substm(s, t)
-      t = TypeScheme.new([], t).normalize
+      t = TypeScheme.new([], t)
       [stmt, t, env]
     end
   end
@@ -422,13 +441,22 @@ class Typechecker
       lamb = Lamb.new(expr.arg, typ.args[0], body)
       [typ, lamb, sbody]
     when App
-      tfunc, f, sfunc = typecheck_expr(expr.f, env)
-      targ, arg, sarg = typecheck_expr(expr.arg, env)
-      tfunc2 = UFun.new(:arrow, [targ, UVar.fresh!])
-      sfunc2 = unify(expr, [[tfunc, tfunc2]] + sfunc + sarg)
-      tresult = Unifier.substm(sfunc2, tfunc2)
-      app = App.new(f, arg)
-      [tresult.args[1], app, sfunc2]
+      if expr.f == :debug_type
+        # if the expression is `debug_type foo`
+        # print the type of `foo` and return `foo`
+        targ, arg, sarg = typecheck_expr(expr.arg, env)
+        targ = Unifier.substm(sarg, targ)
+        puts "#{expr.arg} : #{targ}"
+        [targ, arg, sarg]
+      else
+        tfunc, f, sfunc = typecheck_expr(expr.f, env)
+        targ, arg, sarg = typecheck_expr(expr.arg, env)
+        tfunc2 = UFun.new(:arrow, [targ, UVar.fresh!])
+        sfunc2 = unify(expr, [[tfunc, tfunc2]] + sfunc + sarg)
+        tresult = Unifier.substm(sfunc2, tfunc2)
+        app = App.new(f, arg)
+        [tresult.args[1], app, sfunc2]
+      end
     when If
       tcond, cond, scond = typecheck_expr(expr.cond, env)
       scond2 = Unifier.unify([[tcond, UFun.new(:bool, [])]])
@@ -505,13 +533,17 @@ class Interpreter
   def eval_expr(expr, env)
     case expr
     when App
-      f = eval_expr(expr.f, env)
-      arg = eval_expr(expr.arg, env)
-      case f
-      when Proc, Method
-        eval_expr(f.call(arg), env)
+      if expr.f == :debug_type
+        eval_expr(expr.arg, env)
       else
-        fail "bad application #{expr}"
+        f = eval_expr(expr.f, env)
+        arg = eval_expr(expr.arg, env)
+        case f
+        when Proc, Method
+          eval_expr(f.call(arg), env)
+        else
+          fail "bad application #{expr}"
+        end
       end
     when Lamb
       ->(x) { eval_expr(expr.body, env.merge({expr.arg => x})) }
@@ -536,6 +568,24 @@ class Interpreter
   end
 end
 
+class Runner
+  def initialize
+    @parser = Parser.new
+    @unparser = Unparser.new
+    @desuger = Desuger.new
+    @typechecker = Typechecker.new
+    @interpreter = Interpreter.new
+  end
+
+  def run(text)
+    ast = @parser.parse(text)
+    ast = @desuger.desugar(ast)
+    @typechecker.typecheck(ast)
+    @interpreter.eval(ast)
+    nil
+  end
+end
+
 class REPL
   def initialize
     @parser = Parser.new
@@ -547,17 +597,26 @@ class REPL
     @ienv = {}
   end
 
+  def history_path
+    @history_path ||= File.expand_path('~/.small_history')
+  end
+
   def run
+    FileUtils.touch(history_path) unless File.exist?(history_path)
+    Readline::HISTORY.push(*File.readlines(history_path))
     loop do
       line = Readline.readline("> ", true)
       next if line.nil?
       next if line.empty?
       break if line == "exit"
       run_stmt_text(line)
-    # rescue StandardError => e
-    #   puts "Error : #{e}"
-    #   raise if ENV[:THROW_ERROR]
+    rescue Interrupt
+      break
+    rescue StandardError => e
+      puts "Error : #{e}"
+      raise if ENV[:THROW_ERROR]
     end
+    File.write(history_path, Readline::HISTORY.to_a.join("\n"))
   end
 
   private 
@@ -578,7 +637,11 @@ class REPL
 end
 
 def main
-  REPL.new.run
+  if $stdin.tty?
+    REPL.new.run
+  else
+    Runner.new.run($stdin.read)
+  end
 end
 
 main

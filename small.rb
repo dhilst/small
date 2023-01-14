@@ -593,7 +593,7 @@ class REPL
       if line.empty?
         Readline::HISTORY.pop
         next
-      elsif line == Readline::HISTORY.to_a.last
+      elsif line == Readline::HISTORY.to_a[-2]
         Readline::HISTORY.pop
       end
       break if line == "exit"

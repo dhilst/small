@@ -1,3 +1,4 @@
+require "pry"
 require "readline"
 require "fileutils"
 require "./parser"
@@ -183,7 +184,7 @@ class UFun
     case name
     when :arrow
       fail "invalid arrow it should have exactly 2 arguments, but found #{args}" if args.size != 2
-      if args[0].is_a?(UFun) and args[0].name == :arrow
+      if (args[0].is_a?(UFun) and args[0].name == :arrow) or (args[0].is_a? TypeScheme)
         "(#{args[0]}) -> #{args[1]}"
       else
         "#{args[0]} -> #{args[1]}"
@@ -413,8 +414,6 @@ class Typechecker
       [env[expr].instantiate, expr, []]
     when Lamb
       if expr.typ
-        # fun f : forall a . a -> a => fun p => p f f
-        # 
         targ = expr.typ
       else
         targ = UVar.fresh!
@@ -422,9 +421,14 @@ class Typechecker
       newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
       tbody, body, sbody = typecheck_expr(expr.body, newenv)
       typ = UFun.new(:arrow, [targ, tbody])
-      typ = Unifier.substm(sbody, typ)
-      lamb = Lamb.new(expr.arg, typ.args[0], body)
-      [typ, lamb, sbody]
+      if expr.typ.is_a? TypeScheme
+        lamb = Lamb.new(expr.arg, expr.typ, body)
+        [typ, lamb, []]
+      else
+        lamb = Lamb.new(expr.arg, typ.args[0], body)
+        typ = UFun.new(:arrow, [targ, tbody])
+        [typ, lamb, sbody]
+      end
     when App
       if expr.f == :debug_type
         # if the expression is `debug_type foo`

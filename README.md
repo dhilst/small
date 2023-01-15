@@ -315,10 +315,19 @@ ruby small.rb < somefile
 # TODO
 
 * Make `data` keyword use type constraints
-* Remove `nil` type, make puts return its argument
 * Add a `result` and `list` type and bootstrap a stdlib,
   in a way that is easy to extend. It must be typed but
   it may needed to be (partially or not) implemented in
   _Ruby_. _Ruby_ things should not leak to _Small_, exceptions
   for example should be converted to `result` values
+* Fix this bug
+  ``` 
+   > val f = fun id : forall a . a -> a => (fun _ => id 1) (id true)    
+   val f =
+     fun id => (fun _ => id 1) (id true) : forall a . (a -> a) -> int
+   > f (fun x => false)
+   false : int
+   ```
+
+
 

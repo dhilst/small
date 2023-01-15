@@ -326,6 +326,8 @@ class TypeScheme
       Set.new(typ) | expr_vars(expr.body)
     when App
       expr_vars(expr.f) | expr_vars(expr.arg)
+    when If
+      expr_vars(expr.cond) | expr_vars(expr.then_) | expr_vars(expr.else_)
     when Symbol, Integer, String, TrueClass, FalseClass
       Set.new([])
     else

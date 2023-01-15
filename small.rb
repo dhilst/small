@@ -1,4 +1,4 @@
-require "pry"
+require "set"
 require "readline"
 require "fileutils"
 require "./parser"
@@ -196,25 +196,23 @@ class UFun
 end
 
 class UVar
-  @@next_letter = "a"
-
   def to_s
     "#{letter}"
   end
+end
 
-  def self.fresh!
-    l = @@next_letter.dup
-    @@next_letter.next!
-    UVar.new(l)
+class FreshVars
+  def initialize
+    @available = ("a".."z").to_a.map(&UVar.method(:new)).to_set
   end
 
-  def self.reset!
-    @@next_letter = "a"
+  def use!(x)
+    @available -= Set.new([x])
+    x
   end
 
-  def ==(b)
-    fail "invalid comparison #{self} == #{b.class}" unless b.is_a? UVar
-    letter == b.letter
+  def fresh!
+    use!(@available.to_a.first)
   end
 end
 
@@ -293,11 +291,12 @@ class Unifier
 end
 
 class TypeScheme
-  def instantiate
-    fresh_vars = args.map do |arg|
-      [arg, UVar.fresh!]
+  def instantiate(fresh_vars)
+    vars = args.map do |arg|
+      arg = arg.instantiate(fresh_vars) if arg.is_a? TypeScheme
+      [arg, fresh_vars.fresh!]
     end
-    Unifier.substm(fresh_vars, typ)
+    Unifier.substm(vars, typ)
   end
 
   def self.generalize(typ, env)
@@ -319,6 +318,21 @@ class TypeScheme
       fail "invalid argument #{typ.class} <---"
     end
   end
+
+  def self.expr_vars(expr)
+    case expr
+    when Lamb
+      typ = vars(expr.typ) unless expr.typ.nil?
+      Set.new(typ) | expr_vars(expr.body)
+    when App
+      expr_vars(expr.f) | expr_vars(expr.arg)
+    when Symbol, Integer, String, TrueClass, FalseClass
+      Set.new([])
+    else
+      fail "invalid argument #{expr}"
+    end
+  end
+
   # replace the type variables with new variables
   # in alphabetical order, so forall e h . e -> (e -> h) -> h
   # becomes forall a b -> a -> (a -> b) -> b
@@ -358,8 +372,8 @@ class Typechecker
     int = UFun.new(:int, [])
     bool = UFun.new(:bool, [])
     str = UFun.new(:string, [])
-    a = UVar.fresh!
-    b = UVar.fresh!
+    a = UVar.new("a")
+    b = UVar.new("b")
     env = {
       eq: TypeScheme.new([a], arrow(a, a, bool)),
       sub: TypeScheme.new([], arrow(int, int, int)),
@@ -370,7 +384,7 @@ class Typechecker
       readfile: TypeScheme.new([], arrow(str, str))
     }
     env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
-                              if ENV["ENABLE_FIXPOINT"]
+      if ENV["ENABLE_FIXPOINT"]
     env
   end
 
@@ -385,23 +399,27 @@ class Typechecker
   end
 
   def typecheck_stmt(stmt, env)
-    UVar.reset!
+    fresh_vars = FreshVars.new
     case stmt
     when Val
-      t, val, s = typecheck_expr(stmt.value, env)
+      vars_in_use = TypeScheme.expr_vars(stmt.value)
+      vars_in_use.each { |x| fresh_vars.use!(x) }
+      t, val, s = typecheck_expr(stmt.value, env, fresh_vars)
       t = Unifier.substm(s, t)
-      t = TypeScheme.generalize(t, env).normalize
+      t = TypeScheme.generalize(t, env)
       env[stmt.name] = t
       [Val.new(stmt.name, val), t, env]
     else
-      t, stmt, s = typecheck_expr(stmt, env)
+      vars_in_use = TypeScheme.expr_vars(stmt)
+      vars_in_use.each { |x| fresh_vars.use!(x) }
+      t, stmt, s = typecheck_expr(stmt, env, fresh_vars)
       t = Unifier.substm(s, t)
       t = TypeScheme.new([], t)
       [stmt, t, env]
     end
   end
 
-  def typecheck_expr(expr, env)
+  def typecheck_expr(expr, env, fresh_vars)
     case expr
     when String
       [UFun.new(:string, []), expr, []]
@@ -411,47 +429,54 @@ class Typechecker
       [UFun.new(:bool, []), expr, []]
     when Symbol
       fail "unbound variable #{expr}" unless env.key? expr
-      [env[expr].instantiate, expr, []]
+      [env[expr].instantiate(fresh_vars), expr, []]
     when Lamb
-      if expr.typ
+      case expr.typ
+      when TypeScheme
         targ = expr.typ
-      else
-        targ = UVar.fresh!
+        newenv = env.merge({ expr.arg => targ })
+      when UFun, UVar
+        targ = expr.typ
+        newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
+      when NilClass
+        targ = fresh_vars.fresh!
+        newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
       end
-      newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
-      tbody, body, sbody = typecheck_expr(expr.body, newenv)
+      tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
       typ = UFun.new(:arrow, [targ, tbody])
-      if expr.typ.is_a? TypeScheme
-        lamb = Lamb.new(expr.arg, expr.typ, body)
-        [typ, lamb, []]
-      else
-        lamb = Lamb.new(expr.arg, typ.args[0], body)
-        typ = UFun.new(:arrow, [targ, tbody])
-        [typ, lamb, sbody]
-      end
+      lamb = Lamb.new(expr.arg, typ.args[0], body)
+      typ = UFun.new(:arrow, [targ, tbody])
+      [typ, lamb, sbody]
     when App
       if expr.f == :debug_type
         # if the expression is `debug_type foo`
         # print the type of `foo` and return `foo`
-        targ, arg, sarg = typecheck_expr(expr.arg, env)
+        targ, arg, sarg = typecheck_expr(expr.arg, env, fresh_vars)
         targ = Unifier.substm(sarg, targ)
         puts "#{expr.arg} : #{targ}"
         [targ, arg, sarg]
       else
-        tfunc, f, sfunc = typecheck_expr(expr.f, env)
-        targ, arg, sarg = typecheck_expr(expr.arg, env)
-        tfunc2 = UFun.new(:arrow, [targ, UVar.fresh!])
-        tfunc = tfunc.instantiate if tfunc.is_a? TypeScheme
-        sfunc2 = unify(expr, [[tfunc, tfunc2]] + sfunc + sarg)
-        tresult = Unifier.substm(sfunc2, tfunc2)
-        app = App.new(f, arg)
-        [tresult.args[1], app, sfunc2]
+        tfunc, f, sfunc = typecheck_expr(expr.f, env, fresh_vars)
+        targ, arg, sarg = typecheck_expr(expr.arg, env, fresh_vars)
+        tfunc = tfunc.instantiate(fresh_vars) if tfunc.is_a? TypeScheme
+        if tfunc.is_a? UFun
+          sarg2 = unify(expr, [[targ, tfunc.args[0]]] + sfunc + sarg)
+          tresult = Unifier.substm(sarg2, tfunc)
+          app = App.new(f, arg)
+          [tresult.args[1], app, sarg2]
+        else
+          tfunc2 = UFun.new(:arrow, [targ, fresh_vars.fresh!])
+          sfunc2 = unify(expr, [[tfunc, tfunc2]] + sfunc + sarg)
+          tresult = Unifier.substm(sfunc2, tfunc2)
+          app = App.new(f, arg)
+          [tresult.args[1], app, sfunc2]
+        end
       end
     when If
-      tcond, cond, scond = typecheck_expr(expr.cond, env)
+      tcond, cond, scond = typecheck_expr(expr.cond, env, fresh_vars)
       scond2 = Unifier.unify([[tcond, UFun.new(:bool, [])]])
-      tthen, then_, sthen = typecheck_expr(expr.then_, env)
-      telse, else_, selse = typecheck_expr(expr.else_, env)
+      tthen, then_, sthen = typecheck_expr(expr.then_, env, fresh_vars)
+      telse, else_, selse = typecheck_expr(expr.else_, env, fresh_vars)
       sthenelse = unify(expr, [[tthen, telse]] + sthen + selse)
       tif = Unifier.substm(sthenelse, tthen)
       if_ = If.new(cond, then_, else_)

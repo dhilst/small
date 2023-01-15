@@ -196,6 +196,10 @@ class UFun
 end
 
 class UVar
+  def initialize(x)
+    fail "invalid argument for UVar #{x.class}" unless x.is_a? Symbol
+    super(x)
+  end
   def to_s
     "#{letter}"
   end
@@ -203,10 +207,11 @@ end
 
 class FreshVars
   def initialize
-    @available = ("a".."z").to_a.map(&UVar.method(:new)).to_set
+    @available = ("a".."z").to_a.map {|x| UVar.new(x.to_sym) }.to_set
   end
 
   def use!(x)
+    fail "invalid argument #{x.class}" unless x.is_a? UVar
     @available -= Set.new([x])
     x
   end
@@ -350,10 +355,6 @@ class TypeScheme
     return typ.to_s if args.empty?
     "forall #{args.join(' ')} . #{typ}"
   end
-
-  def alpha
-    ('a'..'z').to_a.map(&UVar.method(:new))
-  end
 end
 
 class Typechecker
@@ -374,8 +375,8 @@ class Typechecker
     int = UFun.new(:int, [])
     bool = UFun.new(:bool, [])
     str = UFun.new(:string, [])
-    a = UVar.new("a")
-    b = UVar.new("b")
+    a = UVar.new(:a)
+    b = UVar.new(:b)
     env = {
       eq: TypeScheme.new([a], arrow(a, a, bool)),
       sub: TypeScheme.new([], arrow(int, int, int)),
@@ -437,18 +438,25 @@ class Typechecker
       when TypeScheme
         targ = expr.typ
         newenv = env.merge({ expr.arg => targ })
+        tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+        typ = UFun.new(:arrow, [targ, tbody])
+        lamb = Lamb.new(expr.arg, expr.typ, body)
+        [typ, lamb, []]
       when UFun, UVar
         targ = expr.typ
         newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
+        tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+        typ = UFun.new(:arrow, [targ, tbody])
+        lamb = Lamb.new(expr.arg, expr.typ, body)
+        [typ, lamb, sbody]
       when NilClass
         targ = fresh_vars.fresh!
         newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
+        tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+        typ = UFun.new(:arrow, [targ, tbody])
+        lamb = Lamb.new(expr.arg, typ.args[0], body)
+        [typ, lamb, sbody]
       end
-      tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
-      typ = UFun.new(:arrow, [targ, tbody])
-      lamb = Lamb.new(expr.arg, typ.args[0], body)
-      typ = UFun.new(:arrow, [targ, tbody])
-      [typ, lamb, sbody]
     when App
       if expr.f == :debug_type
         # if the expression is `debug_type foo`

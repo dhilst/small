@@ -50,7 +50,7 @@ class Parser
   typ_scheme : "forall" typ_args "." typ_expr { TypeScheme.new(val[1], val[3]) }
              | typ_expr
   typ_args : WORD typ_args { [UVar.new(val[0].to_s), val[1]].flatten } 
-           | WORD { [UVar.new(val[0].to_s)] }
+           | WORD { [UVar.new(val[0])] }
   typ_expr : typ_arrow | typ_base
   typ_arrow : typ_base "->" typ_expr { UFun.new(:arrow, [val[0], val[2]]) }
   typ_base : WORD { typ_var_of_sym(val[0]) } | "(" typ_expr ")" { val[1] }
@@ -62,9 +62,9 @@ SYMBOLS = %w(=> -> . | ; = ( ) :).map { |x| Regexp.quote(x) }
 
 def typ_var_of_sym(val)
   if val.size == 1
-    UVar.new(val.to_s)
+    UVar.new(val.to_sym)
   else
-    UFun.new(val.to_s, [])
+    UFun.new(val.to_sym, [])
   end
 end
 

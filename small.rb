@@ -448,31 +448,26 @@ class Typechecker
         targ = expr.typ.instantiate(fresh_vars)
         newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
         tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
-        targ = Unifier.substm(sbody, targ)
-        typ = UFun.new(:arrow, [targ, tbody])
-        typ2 = UFun.new(:arrow, [expr.typ, tbody])
-        puts "#{typ} ==== #{typ2}"
+        targ2 = Unifier.substm(sbody, targ)
+        # I'm imitating ocaml here, not sure if this implementation is correct
+        typ = UFun.new(:arrow, [targ, tbody]) # the original type after instantiation
+        typ2 = UFun.new(:arrow, [targ2, tbody]) # the infered type
+        typ3 = UFun.new(:arrow, [expr.typ, tbody]) # the original type wihtout instantiation
+        fail "type error : #{typ2} is less general than #{typ3} in #{expr}" if typ != typ2
         lamb = Lamb.new(expr.arg, expr.typ, body)
-        [typ, lamb, sbody]
+        return [typ3, lamb, sbody]
       when UFun, UVar
         targ = expr.typ
-        newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
-        tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
-        tbody = Unifier.substm(sbody, tbody)
-        targ = Unifier.substm(sbody, targ)
-        typ = UFun.new(:arrow, [targ, tbody])
-        lamb = Lamb.new(expr.arg, expr.typ, body)
-        [typ, lamb, sbody]
       when NilClass
         targ = fresh_vars.fresh!
-        newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
-        tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
-        tbody = Unifier.substm(sbody, tbody)
-        targ = Unifier.substm(sbody, targ)
-        typ = UFun.new(:arrow, [targ, tbody])
-        lamb = Lamb.new(expr.arg, targ, body)
-        [typ, lamb, sbody]
       end
+      newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
+      tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+      tbody = Unifier.substm(sbody, tbody)
+      targ = Unifier.substm(sbody, targ)
+      typ = UFun.new(:arrow, [targ, tbody])
+      lamb = Lamb.new(expr.arg, targ, body)
+      [typ, lamb, sbody]
     when App
       if expr.f == :debug_type
         # if the expression is `debug_type foo`

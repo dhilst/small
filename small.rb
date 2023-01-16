@@ -1,3 +1,4 @@
+require "pry"
 require "set"
 require "readline"
 require "fileutils"
@@ -137,7 +138,7 @@ class Unparser
       "fun #{expr.arg} => #{unparse_expr(expr.body)}"
     when App
       f = case expr.f
-          when App, Lamb, Let
+          when Lamb, Let
               "(#{unparse_expr(expr.f)})"
           else
             unparse_expr(expr.f)
@@ -197,7 +198,7 @@ end
 
 class UVar
   def initialize(x)
-    fail "invalid argument for UVar #{x.class}" unless x.is_a? Symbol
+    fail "UVar.initialize invalid argument #{x.class}" unless x.is_a? Symbol
     super(x)
   end
   def to_s
@@ -211,13 +212,14 @@ class FreshVars
   end
 
   def use!(x)
-    fail "invalid argument #{x.class}" unless x.is_a? UVar
+    fail "use! invalid argument #{x.class}" unless x.is_a? UVar
     @available -= Set.new([x])
     x
   end
 
   def fresh!
-    use!(@available.to_a.first)
+    x = @available.to_a.first
+    use!(x)
   end
 end
 
@@ -248,7 +250,7 @@ class Unifier
       end
       [[a, b]] + unify(problems)
     else
-      fail "invalid argument #{a.class} #{b.class}"
+      fail "unify : invalid argument #{a.class} #{b.class}"
     end
   end
 
@@ -276,12 +278,12 @@ class Unifier
       return term if term.args.include? k
       subst(k, v, term.typ)
     else
-      fail "invalid argument #{k} #{v} #{term}"
+      fail "subst : invalid argument #{k} #{v} #{term}"
     end
   end
 
   def self.occurs(a, b)
-    fail "invalid argument #{a} #{b}" unless a.is_a? UVar
+    fail "occurs : invalid argument #{a} #{b}" unless a.is_a? UVar
     case b
     when UVar
       a == b
@@ -289,8 +291,11 @@ class Unifier
       b.args.any? do |barg|
         occurs(a, barg)
       end
+    when TypeScheme
+      return false if b.args.include? a 
+      occurs(a, b.typ)
     else
-      fail "invalid argument, #{b}"
+      fail "occurs : invalid argument, #{b}"
     end
   end
 end
@@ -320,23 +325,29 @@ class TypeScheme
     when TypeScheme
       vars(typ.typ).reject { |x| typ.args.include? x }
     else
-      fail "invalid argument #{typ.class} <---"
+      fail "vars : invalid argument #{typ.class} <---"
     end
   end
 
-  def self.expr_vars(expr)
+  def self.expr_vars(expr, tenv)
     case expr
     when Lamb
       typ = vars(expr.typ) unless expr.typ.nil?
-      Set.new(typ) | expr_vars(expr.body)
+      Set.new(typ) | expr_vars(expr.body, tenv)
     when App
-      expr_vars(expr.f) | expr_vars(expr.arg)
+      expr_vars(expr.f, tenv) | expr_vars(expr.arg, tenv)
     when If
-      expr_vars(expr.cond) | expr_vars(expr.then_) | expr_vars(expr.else_)
-    when Symbol, Integer, String, TrueClass, FalseClass
+      expr_vars(expr.cond, tenv) | expr_vars(expr.then_, tenv) | expr_vars(expr.else_, tenv)
+    when Integer, String, TrueClass, FalseClass
       Set.new([])
+    when Symbol
+      if tenv.key? expr
+        Set.new(vars(tenv[expr]))
+      else
+        Set.new([])
+      end
     else
-      fail "invalid argument #{expr}"
+      fail "expr_vars : invalid argument #{expr}"
     end
   end
 
@@ -384,7 +395,8 @@ class Typechecker
       mul: TypeScheme.new([], arrow(int, int, int)),
       not: TypeScheme.new([], arrow(bool, bool)),
       puts: TypeScheme.new([a], arrow(a, a)),
-      readfile: TypeScheme.new([], arrow(str, str))
+      readfile: TypeScheme.new([], arrow(str, str)),
+      unify: TypeScheme.new([], arrow(a, a, a)),
     }
     env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
       if ENV["ENABLE_FIXPOINT"]
@@ -405,18 +417,15 @@ class Typechecker
     fresh_vars = FreshVars.new
     case stmt
     when Val
-      vars_in_use = TypeScheme.expr_vars(stmt.value)
+      vars_in_use = TypeScheme.expr_vars(stmt.value, env)
       vars_in_use.each { |x| fresh_vars.use!(x) }
-      t, val, s = typecheck_expr(stmt.value, env, fresh_vars)
-      t = Unifier.substm(s, t)
-      t = TypeScheme.generalize(t, env)
+      t, val, _ = typecheck_expr(stmt.value, env, fresh_vars)
       env[stmt.name] = t
       [Val.new(stmt.name, val), t, env]
     else
-      vars_in_use = TypeScheme.expr_vars(stmt)
+      vars_in_use = TypeScheme.expr_vars(stmt, env)
       vars_in_use.each { |x| fresh_vars.use!(x) }
-      t, stmt, s = typecheck_expr(stmt, env, fresh_vars)
-      t = Unifier.substm(s, t)
+      t, stmt, _ = typecheck_expr(stmt, env, fresh_vars)
       t = TypeScheme.new([], t)
       [stmt, t, env]
     end
@@ -436,16 +445,21 @@ class Typechecker
     when Lamb
       case expr.typ
       when TypeScheme
-        targ = expr.typ
-        newenv = env.merge({ expr.arg => targ })
+        targ = expr.typ.instantiate(fresh_vars)
+        newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
         tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+        targ = Unifier.substm(sbody, targ)
         typ = UFun.new(:arrow, [targ, tbody])
+        typ2 = UFun.new(:arrow, [expr.typ, tbody])
+        puts "#{typ} ==== #{typ2}"
         lamb = Lamb.new(expr.arg, expr.typ, body)
-        [typ, lamb, []]
+        [typ, lamb, sbody]
       when UFun, UVar
         targ = expr.typ
         newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
         tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+        tbody = Unifier.substm(sbody, tbody)
+        targ = Unifier.substm(sbody, targ)
         typ = UFun.new(:arrow, [targ, tbody])
         lamb = Lamb.new(expr.arg, expr.typ, body)
         [typ, lamb, sbody]
@@ -453,8 +467,10 @@ class Typechecker
         targ = fresh_vars.fresh!
         newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
         tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
+        tbody = Unifier.substm(sbody, tbody)
+        targ = Unifier.substm(sbody, targ)
         typ = UFun.new(:arrow, [targ, tbody])
-        lamb = Lamb.new(expr.arg, typ.args[0], body)
+        lamb = Lamb.new(expr.arg, targ, body)
         [typ, lamb, sbody]
       end
     when App
@@ -470,6 +486,13 @@ class Typechecker
         targ, arg, sarg = typecheck_expr(expr.arg, env, fresh_vars)
         tfunc = tfunc.instantiate(fresh_vars) if tfunc.is_a? TypeScheme
         if tfunc.is_a? UFun
+          tfunc = UFun.new(tfunc.name, tfunc.args.map do |x|
+            if x.is_a? TypeScheme
+              x.instantiate(fresh_vars)
+            else
+              x
+            end
+          end)
           sarg2 = unify(expr, [[targ, tfunc.args[0]]] + sfunc + sarg)
           tresult = Unifier.substm(sarg2, tfunc)
           app = App.new(f, arg)
@@ -495,7 +518,7 @@ class Typechecker
       # PS in [let x = ... in ...], [x] is not universally
       # quantified. [let] is just sugar for application, only [val x =
       # ...] constructs are universally quantified.
-      fail "invalid argument #{expr}"
+      fail "typecheck_expr : invalid argument #{expr}"
     end
   end
 
@@ -525,7 +548,8 @@ class Interpreter
       sub: ->(a, b) { a - b }.curry,
       eq: ->(a, b) { a == b }.curry,
       readfile: ->(a) { File.read(a) },
-      not: ->(a) { not a }
+      not: ->(a) { not a },
+      unify: ->(a, b) { a }.curry,
     }
   end
 

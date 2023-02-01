@@ -3,8 +3,6 @@ require "set"
 require "readline"
 require "fileutils"
 require "./parser"
-
-
 # Receives an AST and return a simpler AST with only
 # Val, App, Lamb, Symbol (denoting variables) and constants
 class Desuger
@@ -22,7 +20,30 @@ class Desuger
     end
   end
 
-  def app(*exprs)
+  def self.tlamb2(*args, body)
+    *args, arg = args
+    args.reverse.reduce(Lamb.new(arg.keys.first, arg.values.first, body)) do |acc, arg|
+      Lamb.new(arg.keys.first, arg.values.first, acc)
+    end
+  end
+
+  def self.tlamb(*targs_body)
+    fresh_vars = FreshVars.new
+    *args, last_arg, body = targs_body
+    t = fresh_vars.use!(UVar.new(last_arg.values.first)) if last_arg.values.first.is_a? Symbol
+    fail "nil type #{targs_body}" if t.nil?
+    init = Lamb.new(last_arg.keys.first, t, body)
+    args.reverse.reduce(init) do |acc, arg|
+      if arg.values.first.is_a? Symbol
+        t = fresh_vars.use!(UVar.new(arg.values.first))
+      else
+        t = arg.values.first
+      end
+      Lamb.new(arg.keys.first, t, acc)
+    end
+  end
+
+  def self.app2(*exprs)
     e1, e2, *exprs = exprs
     init = App.new(e1, e2)
     exprs.reduce(init) do |acc, arg|
@@ -30,11 +51,66 @@ class Desuger
     end
   end
 
+  def app(*exprs)
+    e1, e2, *exprs = exprs
+    init = App.new(e1, e2)
+    exprs.reduce(init) do |acc, arg|
+      App.new(acc, arg)
+    end
+  end
+  
+  def typ_args_in_common(data, ctr)
+    fail "invalid argument not a data type" unless data.is_a? DataType
+    fail "invalid argument not a ctr" unless ctr.is_a? Ctr
+
+    Set[data.args] - Set[ctr.args]
+  end
+
   def desugar_stmt(stmt)
     case stmt
     when DataType
+      # data opt a = some a | none
+      # --------------------------
+      # val some = fun x : b -> a => fun none : a => some x
+      # val none = fun some x : b -> a => fun none : a => none
+      #
+      # data ok a b = ok a | err b
+      # --------------------------
+      # val ok = fun x : b => fun ok : b -> a => fun err : c -> a => ok x
+      # val err = fun x : c => fun ok : b -> a => fun err : c -> a => err x
+
+      # val ok = fun x : b => fun ok : b -> a => fun err : c -> a => ok x
+
+      # data ok2 a b c = ok a b => err c
+      # ------------------------------------
+      # val ok2 = 
+      #   fun a : a => fun b : b =>
+      #   fun ok : a -> b -> d => 
+      #   fun err : c -> d => ok a b
+      # 
+      # 1. generate a fresh var for each constructor argument
+      # 2. if the constructor as no argument generate a fresh var for it
+      # 3. generate a fresh var for the conclusion of the type
+      #    (d in the above example)
+      # 4. generate the function [fun a : a => fun b : b => ...]
+      #    these are the arguments for the current constructor
+      #    a, b, .. are the variables generated in 1 and 2
+      # 5. generate the function [fun ok : a -> b -> d => fun err : c -> d => ...]
+      #    these are the constructors themselves
+      # 6. generate the body, which is [app (ctr, *ctr_args)],
+      #    i.e., the application of the current constructor with its arguments
+      # 7. replace ... with the result of 5 in in 4
+      # 8. replace .. with the result with the function body from 6 in 5
+      fvs = FreshVars.new
+      targs = stmt.args
+      tctrs = stmt.ctrs.map do |ctr|
+        args = targs&.select {|x| ctr.args&.include? x}
+        [ctr, args&.flatten]
+      end
+
+
       ctrs = stmt.ctrs.map(&:name)
-      stmt.ctrs.map.with_index do |ctr, idx|
+      stmt.ctrs.map do |ctr|
         if ctr.args.nil?
           # none ~> let none = fun some => fun none => none
           Val.new(ctr.name, lamb(*[*ctrs, ctr.name]))
@@ -325,7 +401,7 @@ class TypeScheme
     when TypeScheme
       vars(typ.typ).reject { |x| typ.args.include? x }
     else
-      fail "vars : invalid argument #{typ.class} <---"
+      fail "vars : invalid argument #{typ.class} #{typ}<---"
     end
   end
 
@@ -389,29 +465,30 @@ class Typechecker
     a = UVar.new(:a)
     b = UVar.new(:b)
     env = {
-      eq: TypeScheme.new([a], arrow(a, a, bool)),
-      sub: TypeScheme.new([], arrow(int, int, int)),
-      add: TypeScheme.new([], arrow(int, int, int)),
-      mul: TypeScheme.new([], arrow(int, int, int)),
-      not: TypeScheme.new([], arrow(bool, bool)),
-      puts: TypeScheme.new([a], arrow(a, a)),
-      readfile: TypeScheme.new([], arrow(str, str)),
-      unify: TypeScheme.new([], arrow(a, a, a)),
+      eq: TypeScheme.new([a], Typechecker.arrow(a, a, bool)),
+      sub: TypeScheme.new([], Typechecker.arrow(int, int, int)),
+      add: TypeScheme.new([], Typechecker.arrow(int, int, int)),
+      mul: TypeScheme.new([], Typechecker.arrow(int, int, int)),
+      not: TypeScheme.new([], Typechecker.arrow(bool, bool)),
+      puts: TypeScheme.new([a], Typechecker.arrow(a, a)),
+      readfile: TypeScheme.new([], Typechecker.arrow(str, str)),
+      unify: TypeScheme.new([], Typechecker.arrow(a, a, a)),
     }
-    env[:fix] = TypeScheme.new([a, b], arrow(arrow(arrow(a, b), a, b), a, b)) \
+    env[:fix] = TypeScheme.new([a, b],
+                              Typechecker.arrow(Typechecker.arrow(Typeschecker.arrow(a, b), a, b), a, b)) \
       if ENV["ENABLE_FIXPOINT"]
     env
   end
 
-  private
-
-  def arrow(*args)
+  def self.arrow(*args)
     *args, a, b = args
     init = UFun.new(:arrow, [a, b])
     args.reverse.reduce(init) do |acc, arg|
       UFun.new(:arrow, [arg, acc])
     end
   end
+
+  private
 
   def typecheck_stmt(stmt, env)
     fresh_vars = FreshVars.new
@@ -420,7 +497,7 @@ class Typechecker
       vars_in_use = TypeScheme.expr_vars(stmt.value, env)
       vars_in_use.each { |x| fresh_vars.use!(x) }
       t, val, _ = typecheck_expr(stmt.value, env, fresh_vars)
-      env[stmt.name] = t
+      env[stmt.name] = TypeScheme.generalize(t, env)
       [Val.new(stmt.name, val), t, env]
     else
       vars_in_use = TypeScheme.expr_vars(stmt, env)

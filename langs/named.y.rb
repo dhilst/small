@@ -308,7 +308,9 @@ class Typechecker
         args.each do |arg|
           typechecker.typecheck_expr(arg, env)
         end
-        typechecker.typecheck_expr(last, env)
+        x = typechecker.typecheck_expr(last, env)
+        puts "seq : #{x} #{last}"
+        x
       end,
       puts: Ctr.new(:Arrow, [Object, NilClass]),
       add: Ctr.new(:Arrow, [Integer, Integer, Integer]),
@@ -330,6 +332,8 @@ class Typechecker
         newenv = env.merge(stmt.args.to_h)
         typs = stmt.args.map {|x| x[1..] }
         body = typecheck_expr(stmt.body, newenv)
+        puts "body #{stmt.body} : #{body} : #{stmt.ret_typ}"
+        do_typecheck(stmt.ret_typ, body, newenv, stmt)
         env[stmt.name] = Ctr.new(:Arrow, [*typs, body])
       else
         fail "bad stmt #{stmt}"
@@ -340,6 +344,7 @@ class Typechecker
   end
 
   def typecheck_expr(expr, env)
+    puts "typecheck #{expr}"
     case expr
     when OpenStruct 
       case expr.typ
@@ -356,12 +361,7 @@ class Typechecker
           if fargs.size != args.size
 
         fargs.zip(args).each do |farg, arg|
-          case [farg, arg].map(&:class)
-          when [Class, Class]
-            fail "type error, expecting #{farg}, but found #{arg}, in #{expr}" unless arg <= farg
-          else
-            fail "type error strict, expecting #{farg}, but found #{arg}, in #{expr}" unless arg == farg
-          end
+          do_typecheck(farg, arg, env, expr)
         end
         fnorm.args.last
       when :fun
@@ -373,10 +373,38 @@ class Typechecker
         fail "bad expr OpenStruct #{expr}"
       end
     when Symbol
-      fail "unbounded variable #{expr}" unless env.key? expr
-      env[expr]
+      if env.key? expr
+        puts "lookup success #{expr} : #{env[expr]}"
+        env[expr]
+      elsif expr.to_s[0].match /[[:upper:]]/
+        begin
+          Object.const_get(expr)
+        rescue StandardError
+          fail "unbounded variable #{expr}"
+        end
+      else
+        fail "unbounded variable #{expr}"
+      end
+    when Class
+      expr
     else
       expr.class
+    end
+  end
+
+
+  def do_typecheck(farg, arg, env, expr)
+    case [farg, arg].map(&:class)
+    when [Symbol, Class]
+      do_typecheck(typecheck_expr(farg, env), arg, env, expr)
+    when [Symbol, Symbol]
+      do_typecheck(typecheck_expr(farg, env), typecheck_expr(arg, env), env, expr)
+    when [Class, Symbol]
+      do_typecheck(farg, typecheck_expr(arg, env), env, expr)
+    when [Class, Class]
+      fail "type error, expecting #{farg}, but found #{arg}, in #{expr}" unless arg <= farg
+    else
+      fail "type error strict, expecting #{farg}, but found #{arg}, in #{expr}" unless arg == farg
     end
   end
 end
@@ -384,11 +412,12 @@ end
 
 ast = Parser.new.parse(<<END
 
-fun foo(x : Integer -> Integer -> Integer) : Integer = x(0, 1);
+fun puts2(x : Integer) : NilClass =
+    puts(x);
 
-fun main () : NilClass = do
-    puts(foo(add));
-end;
+fun main() : NilClass =
+    puts2(true);
+
 END
 )
 # pp ast

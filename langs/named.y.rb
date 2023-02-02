@@ -145,14 +145,6 @@ def next_token
   @tokens.shift
 end
 
-def of_typ(str)
-  if str.size == 1
-    UVar.new(str)
-  else
-    UFun.new(str, [])
-  end
-end
-
 ---- header
 
 require "pry"
@@ -208,7 +200,7 @@ class Ctr < Struct.new :name, :args
         else
           Ctr.new(x.name, x.args.map(&method(:flat)))
         end
-      when Class
+      when Class, NilClass
         x
       when Symbol
         begin
@@ -343,7 +335,7 @@ class Typechecker
       end,
       puts: Ctr.new(:Arrow, [Object, NilClass]),
       add: Ctr.new(:Arrow, [Integer, Integer, Integer]),
-      method: Ctr.new(:Arrow, [Object, String, Object]),
+      method: Ctr.new(:Arrow, [Object, String, Method]),
     }
   end
 
@@ -380,20 +372,31 @@ class Typechecker
       when :call
         f = typecheck_expr(expr.func, env)
         args = expr.args.map {|arg| Ctr.normalize(typecheck_expr(arg, env)) }
+        return args.last if f == Object
         case f
         when TypRule # this is for builtin functions with custom typechecking
           return f.run(self, args, env)
         end
         fnorm = Ctr.normalize(f)
-        fargs = fnorm.args[..-2]
-        fail "arity error, expected #{fargs.size} arguments, but found #{args.size} in #{expr}" \
-          if fargs.size != args.size
+        case fnorm
+        when Class
+          if fnorm == Method
+          else
+            fail "invalid function type #{fnorm} in #{expr}"
+          end
+        when Ctr
+          fargs = fnorm.args[..-2]
+          fail "arity error, expected #{fargs.size} arguments, but found #{args.size} in #{expr}" \
+            if fargs.size != args.size
 
-        fargs.zip(args).each do |farg, arg|
-          do_typecheck(farg, arg, env, expr)
+          fargs.zip(args).each do |farg, arg|
+            do_typecheck(farg, arg, env, expr)
+          end
+          return fnorm.args.last
+        else
+          fail "typecheck_expr invalid function type #{fnorm}"
         end
-        fnorm.args.last
-      when :fun
+       when :fun
         newenv = env.merge(stmt.args.to_h)
         typs = stmt.args.map {|x| x[1..] }
         tbody = typecheck_expr(expr.body, newenv)
@@ -441,10 +444,8 @@ end
 
 ast = Parser.new.parse(<<END
 
-fun f() : Object -> NilClass = puts;
-
 fun main() : NilClass = do
-    puts(method(nil, "class")());
+    puts(method(1, "class")());
 end;
 END
 )

@@ -9,8 +9,11 @@ class Parser
     right "->"
     left "*" "/"
     left "+" "-"
+    nonassoc "true" "false" "nil"
+    nonassoc "if" "then" "else"
+    nonassoc "let" "=" "in"
   preclow
-  token WORD INT BOOL
+  token WORD INT BOOL STRING NIL
   options no_result_var
 
   start main
@@ -27,10 +30,15 @@ class Parser
   fun : "fun" WORD "(" args ")" ":" typ "=" expr
        { OpenStruct.new(typ: :fun, name: val[1], args: val[3], ret_typ: val[6].first,  body: val[8]) }
   fun : "fun" WORD "(" ")" ":" typ "=" expr
-       { OpenStruct.new(typ: :fun, name: val[1], args: [], ret_typ: val[5].first, body: val[7]) }
+      { 
+         t = val[5]
+         t = t.first unless t.is_a? Ctr
+        OpenStruct.new(typ: :fun, name: val[1], args: [], ret_typ: t, body: val[7]) 
+      }
   args : arg "," args { [val[0], *val[2]] } | arg { [val[0]] }
   arg : WORD ":" typ { [val[0], val[2]] }
-  typ : typ "->" typ { Ctr.new(:Arrow, [val[0], val[2]].flatten) }
+  typ : typ "->" typ { 
+        Ctr.new(:Arrow, [val[0], val[2]].flatten) }
       | "!" words { "!#{val[1]}".to_sym }
       | words {
         if val[0].size == 1
@@ -56,12 +64,12 @@ class Parser
   do_ : "do" exprs_sc "end"
   { OpenStruct.new(typ: :call, func: :seq, args: val[1]) }
 
-  call : expr_1 "(" exprs ")"
+  call : expr "(" exprs ")"
        { OpenStruct.new(typ: :call, func: val[0], args: val[2]) }
-       | expr_1 "(" ")"
+       | expr "(" ")"
        { OpenStruct.new(typ: :call, func: val[0], args: []) }
 
-  atom : INT | WORD | BOOL
+  atom : INT | WORD | BOOL | STRING | NIL
   if_ : "if" expr "then" expr "else" expr
        { OpenStruct.new(typ: :if_, cond: val[1],
                         then_: val[3], else_: val[5]) }
@@ -69,8 +77,24 @@ end
 
 ---- inner
 
-KEYWORDS = %w(fun let in if then else true false do end)
-SYMBOLS = %w(; : = ( ) , ! ->).map { |x| Regexp.quote(x) }
+KEYWORDS = %w(fun let in if then else true false do end nil)
+SYMBOLS = %w(; : = ( ) , ! -> ").map { |x| Regexp.quote(x) }
+def readstring(s)
+  acc = []
+  loop do
+    x = s.scan_until(/"|\"/)
+    fail "unterminated string \"#{str}" if x.nil?
+    if x.end_with? '\"'
+      acc << x
+    else
+      acc << x[..-2]
+      break
+    end
+  end
+  acc.join("")
+end
+
+
 def make_tokens str
   require 'strscan'
 
@@ -81,6 +105,9 @@ def make_tokens str
     when s.skip(/\s+/)
     when s.scan(/#/)
       s.skip_until(/$/)
+    when tok = s.scan(/"/)
+      x = readstring(s)
+      result << [:STRING,x]
     when tok = s.scan(/(#{SYMBOLS.join("|")})/)
       result << [tok, nil]
     when tok = s.scan(/\b(#{KEYWORDS.join("|")})\b/)
@@ -89,6 +116,8 @@ def make_tokens str
         result << [:BOOL, true]
       when "false"
         result << [:BOOL, false]
+      when "nil"
+        result << [:NIL, nil]
       else
         result << [tok, nil]
       end
@@ -244,7 +273,7 @@ class Interpreter
 
   def eval_expr(expr, env)
     case expr
-    when Integer, TrueClass, FalseClass, Method, Proc
+    when Integer, TrueClass, FalseClass, Method, Proc, String, NilClass
       expr
     when Symbol
       if /[[:upper:]]/.match(expr)
@@ -297,7 +326,8 @@ global_env = {
   sub: ->(a, b) { a - b },
   mul: ->(a, b) { a * b },
   eq: ->(a, b) { a == b },
-  seq: ->(*args) { args&.last }
+  seq: ->(*args) { args&.last },
+  method: ->(obj, m) { obj.method(m) }
 }
 
 class Typechecker
@@ -309,11 +339,11 @@ class Typechecker
           typechecker.typecheck_expr(arg, env)
         end
         x = typechecker.typecheck_expr(last, env)
-        puts "seq : #{x} #{last}"
         x
       end,
       puts: Ctr.new(:Arrow, [Object, NilClass]),
       add: Ctr.new(:Arrow, [Integer, Integer, Integer]),
+      method: Ctr.new(:Arrow, [Object, String, Object]),
     }
   end
 
@@ -332,8 +362,8 @@ class Typechecker
         newenv = env.merge(stmt.args.to_h)
         typs = stmt.args.map {|x| x[1..] }
         body = typecheck_expr(stmt.body, newenv)
-        puts "body #{stmt.body} : #{body} : #{stmt.ret_typ}"
-        do_typecheck(stmt.ret_typ, body, newenv, stmt)
+        ret_typ = Ctr.normalize(stmt.ret_typ)
+        do_typecheck(ret_typ, body, newenv, stmt)
         env[stmt.name] = Ctr.new(:Arrow, [*typs, body])
       else
         fail "bad stmt #{stmt}"
@@ -344,7 +374,6 @@ class Typechecker
   end
 
   def typecheck_expr(expr, env)
-    puts "typecheck #{expr}"
     case expr
     when OpenStruct 
       case expr.typ
@@ -374,7 +403,6 @@ class Typechecker
       end
     when Symbol
       if env.key? expr
-        puts "lookup success #{expr} : #{env[expr]}"
         env[expr]
       elsif expr.to_s[0].match /[[:upper:]]/
         begin
@@ -404,6 +432,7 @@ class Typechecker
     when [Class, Class]
       fail "type error, expecting #{farg}, but found #{arg}, in #{expr}" unless arg <= farg
     else
+      return nil if farg == Object
       fail "type error strict, expecting #{farg}, but found #{arg}, in #{expr}" unless arg == farg
     end
   end
@@ -412,12 +441,11 @@ end
 
 ast = Parser.new.parse(<<END
 
-fun puts2(x : Integer) : NilClass =
-    puts(x);
+fun f() : Object -> NilClass = puts;
 
-fun main() : NilClass =
-    puts2(true);
-
+fun main() : NilClass = do
+    puts(method(nil, "class")());
+end;
 END
 )
 # pp ast

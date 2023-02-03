@@ -149,6 +149,7 @@ end
 
 require "pry"
 require "ostruct"
+require "boolean"
 
 class Array
   def unwrap
@@ -200,7 +201,7 @@ class Ctr < Struct.new :name, :args
         else
           Ctr.new(x.name, x.args.map(&method(:flat)))
         end
-      when Class, NilClass
+      when Class, NilClass, Module # Boolean is a Module not a Class
         x
       when Symbol
         begin
@@ -209,7 +210,7 @@ class Ctr < Struct.new :name, :args
           x
         end
       else
-        fail "flat : invalid argument #{x}"
+        fail "flat : invalid argument --> #{x} : #{x.class}"
       end
     end
     
@@ -265,7 +266,7 @@ class Interpreter
 
   def eval_expr(expr, env)
     case expr
-    when Integer, TrueClass, FalseClass, Method, Proc, String, NilClass
+    when Integer, Boolean, Method, Proc, String, NilClass
       expr
     when Symbol
       if /[[:upper:]]/.match(expr)
@@ -295,7 +296,7 @@ class Interpreter
           eval_expr(expr.else_, env)
         end
       else
-        fail "bad expression #{expr}"
+        fail "bad expression ---> #{expr}"
       end
     end
   end
@@ -325,6 +326,7 @@ global_env = {
 class Typechecker
   def global_env
     {
+      eq: Ctr.new(:Arrow, [Object, Object, Boolean]),
       seq: TypRule.new(:seq) do |typechecker, args, env|
         *args, last = args
         args.each do |arg|
@@ -335,6 +337,8 @@ class Typechecker
       end,
       puts: Ctr.new(:Arrow, [Object, NilClass]),
       add: Ctr.new(:Arrow, [Integer, Integer, Integer]),
+      sub: Ctr.new(:Arrow, [Integer, Integer, Integer]),
+      mul: Ctr.new(:Arrow, [Integer, Integer, Integer]),
       method: Ctr.new(:Arrow, [Object, String, Method]),
     }
   end
@@ -369,6 +373,15 @@ class Typechecker
     case expr
     when OpenStruct 
       case expr.typ
+      when :if_
+        cond = typecheck_expr(expr.cond, env)
+        p cond
+        fail "type error expected Boolean, found #{cond} #{cond.class}" \
+          unless cond == Boolean
+        then_ = typecheck_expr(expr.then_, env)
+        else_ = typecheck_expr(expr.else_, env)
+        do_typecheck(then_, else_, env, expr)
+        then_
       when :call
         f = typecheck_expr(expr.func, env)
         args = expr.args.map {|arg| Ctr.normalize(typecheck_expr(arg, env)) }
@@ -402,7 +415,7 @@ class Typechecker
         tbody = typecheck_expr(expr.body, newenv)
         Ctr.new(:Arrow, [*typs, tbody])
       else
-        fail "bad expr OpenStruct #{expr}"
+        fail "bad expr OpenStruct --> #{expr}"
       end
     when Symbol
       if env.key? expr
@@ -443,9 +456,13 @@ end
 
 
 ast = Parser.new.parse(<<END
+fun fact(x : Integer) : Integer =
+    if eq(x, 1)
+    then 1
+    else mul(x, fact(sub(x, 1)));
 
 fun main() : NilClass = do
-    puts(method(1, "class")());
+    puts(inc(1));
 end;
 END
 )

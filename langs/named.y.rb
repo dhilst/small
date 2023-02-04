@@ -6,6 +6,7 @@ class Parser
   prechigh
     nonassoc "!"
     nonassoc "(" ")"
+    nonassoc "."
     right "->"
     left "*" "/"
     left "+" "-"
@@ -69,7 +70,8 @@ class Parser
        | expr "(" ")"
        { OpenStruct.new(typ: :call, func: val[0], args: []) }
 
-  atom : INT | WORD | BOOL | STRING | NIL
+  atom : INT | WORD | BOOL | STRING | NIL | method
+  method : expr "." WORD { OpenStruct.new(typ: :call, func: :method, args: [val[0], val[2].to_s]) }
   if_ : "if" expr "then" expr "else" expr
        { OpenStruct.new(typ: :if_, cond: val[1],
                         then_: val[3], else_: val[5]) }
@@ -78,7 +80,7 @@ end
 ---- inner
 
 KEYWORDS = %w(fun let in if then else true false do end nil)
-SYMBOLS = %w(; : = ( ) , ! -> ").map { |x| Regexp.quote(x) }
+SYMBOLS = %w(; : = ( ) , ! -> . ").map { |x| Regexp.quote(x) }
 def readstring(s)
   acc = []
   loop do
@@ -459,13 +461,8 @@ end
 
 
 ast = Parser.new.parse(<<END
-fun fact(x : Integer) : Integer =
-    if eq(x, 1)
-    then 1
-    else mul(x, fact(sub(x, 1)));
-
 fun main() : NilClass = do
-    puts(fact(5));
+    puts(File.open("/etc/hosts").read());
 end;
 END
 )

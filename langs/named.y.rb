@@ -6,7 +6,10 @@ class Parser
   prechigh
     nonassoc "!"
     nonassoc "(" ")"
+    nonassoc "&"
     nonassoc "."
+    nonassoc ","
+    nonassoc "[" "]"
     right "->"
     left "*" "/"
     left "+" "-"
@@ -70,8 +73,11 @@ class Parser
        | expr "(" ")"
        { OpenStruct.new(typ: :call, func: val[0], args: []) }
 
-  atom : INT | WORD | BOOL | STRING | NIL | method
+  atom : INT | WORD | BOOL | STRING | NIL | method | list | as_block
+  as_block : "&" WORD { OpenStruct.new(typ: :as_block, val: val[1]) }
   method : expr "." WORD { OpenStruct.new(typ: :call, func: :method, args: [val[0], val[2].to_s]) }
+  list : "[" exprs "]" { val[1] }
+       | "[" "]" { [] }
   if_ : "if" expr "then" expr "else" expr
        { OpenStruct.new(typ: :if_, cond: val[1],
                         then_: val[3], else_: val[5]) }
@@ -80,7 +86,7 @@ end
 ---- inner
 
 KEYWORDS = %w(fun let in if then else true false do end nil)
-SYMBOLS = %w(; : = ( ) , ! -> . ").map { |x| Regexp.quote(x) }
+SYMBOLS = %w(; : = ( ) , ! -> . [ ] & ").map { |x| Regexp.quote(x) }
 def readstring(s)
   acc = []
   loop do
@@ -270,6 +276,8 @@ class Interpreter
     case expr
     when Integer, Boolean, Method, Proc, String, NilClass
       expr
+    when Array
+      expr.map {|elem| eval_expr(elem, env) }
     when Symbol
       if /[[:upper:]]/.match(expr)
         return Object.const_get(expr)
@@ -279,6 +287,13 @@ class Interpreter
     when OpenStruct
       case expr.typ
       when :call
+        # This is a special case for handling the & operator
+        # foo(&bar) pass bar as a block to foo
+        if expr.args.size == 1 && expr.args[0].is_a?(OpenStruct) && expr.args[0].typ == :as_block
+          f = eval_expr(expr.func, env)
+          arg = eval_expr(expr.args[0].val, env)
+          return f.call(&arg)
+        end
         f = eval_expr(expr.func, env)
         args = expr.args.map {|x| eval_expr(x, env) }
         fail "bad application #{f}" unless [Method, Proc].member? f.class
@@ -379,6 +394,8 @@ class Typechecker
     case expr
     when OpenStruct 
       case expr.typ
+      when :as_block
+        typecheck_expr(expr.val, env)
       when :if_
         cond = typecheck_expr(expr.cond, env)
         fail "type error expected Boolean, found #{cond} #{cond.class}" \
@@ -461,8 +478,11 @@ end
 
 
 ast = Parser.new.parse(<<END
+
+fun inc(x : Integer) : Integer = add(x, 1);
+
 fun main() : NilClass = do
-    puts(File.open("/etc/hosts").read());
+    puts([1,2,3].map(&inc));
 end;
 END
 )

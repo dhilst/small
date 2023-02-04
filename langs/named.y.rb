@@ -10,6 +10,7 @@ class Parser
     nonassoc "."
     nonassoc ","
     nonassoc "[" "]"
+    nonassoc "{" "}"
     right "->"
     left "*" "/"
     left "+" "-"
@@ -73,11 +74,15 @@ class Parser
        | expr "(" ")"
        { OpenStruct.new(typ: :call, func: val[0], args: []) }
 
-  atom : INT | WORD | BOOL | STRING | NIL | method | list | as_block
+  atom : INT | WORD | BOOL | STRING | NIL | method | list | hashtbl | as_block # this is not an "atom" anymore, rename it
   as_block : "&" WORD { OpenStruct.new(typ: :as_block, val: val[1]) }
   method : expr "." WORD { OpenStruct.new(typ: :call, func: :method, args: [val[0], val[2].to_s]) }
   list : "[" exprs "]" { val[1] }
        | "[" "]" { [] }
+  hashtbl : "{" fields "}" { val[1].to_h }
+          | "{" "}" { {} }
+  fields : pair "," fields { [val[0], *val[2]] } | pair { [val[0]] }
+  pair : expr "=>" expr { [val[0], val[2]] }
   if_ : "if" expr "then" expr "else" expr
        { OpenStruct.new(typ: :if_, cond: val[1],
                         then_: val[3], else_: val[5]) }
@@ -86,7 +91,7 @@ end
 ---- inner
 
 KEYWORDS = %w(fun let in if then else true false do end nil)
-SYMBOLS = %w(; : = ( ) , ! -> . [ ] & ").map { |x| Regexp.quote(x) }
+SYMBOLS = %w(; : => = ( ) , ! -> { } . [ ] & ").map { |x| Regexp.quote(x) }
 def readstring(s)
   acc = []
   loop do
@@ -276,6 +281,8 @@ class Interpreter
     case expr
     when Integer, Boolean, Method, Proc, String, NilClass
       expr
+    when Hash
+      expr.map {|k, v| [eval_expr(k, env), eval_expr(v, env)] }.to_h
     when Array
       expr.map {|elem| eval_expr(elem, env) }
     when Symbol
@@ -482,7 +489,7 @@ ast = Parser.new.parse(<<END
 fun inc(x : Integer) : Integer = add(x, 1);
 
 fun main() : NilClass = do
-    puts([1,2,3].map(&inc));
+    puts({1 => 2, 3 => true});
 end;
 END
 )

@@ -63,7 +63,7 @@ class Parser
   | expr ";" { [val[0]] }
 
   exprs : expr "," exprs 
-  { [val[0], val[2]].flatten } 
+  { [val[0], *val[2]] } 
   | expr { [val[0]] }
 
   do_ : "do" exprs_sc "end"
@@ -344,7 +344,8 @@ global_env = {
   mul: ->(a, b) { a * b },
   eq: ->(a, b) { a == b },
   seq: ->(*args) { args&.last },
-  method: ->(obj, m) { obj.method(m) }
+  index: ->(ar, idx) { ar[idx] },
+  method: ->(obj, m, t1, *t2) { obj.method(m) }
 }
 
 class Typechecker
@@ -356,14 +357,22 @@ class Typechecker
         args.each do |arg|
           typechecker.typecheck_expr(arg, env)
         end
-        x = typechecker.typecheck_expr(last, env)
-        x
+        typechecker.typecheck_expr(last, env)
       end,
+      index: Ctr.new(:Arrow, [Object, Integer, Object]),
       puts: Ctr.new(:Arrow, [Object, NilClass]),
       add: Ctr.new(:Arrow, [Integer, Integer, Integer]),
       sub: Ctr.new(:Arrow, [Integer, Integer, Integer]),
       mul: Ctr.new(:Arrow, [Integer, Integer, Integer]),
-      method: Ctr.new(:Arrow, [Object, String, Method]),
+      method: TypRule.new(:method) do |typechecker, args, env|
+        obj, meth, t1, t2 = args
+        args.each {|x| typechecker.typecheck_expr(x, env) }
+        if t2.nil?
+          Ctr.new(:Arrow, [t1])
+        else
+          Ctr.new(:Arrow, [t1, t2])
+        end
+      end,
     }
   end
 
@@ -387,7 +396,7 @@ class Typechecker
         typs = stmt.args.map {|x| x[1..] }
         body = typecheck_expr(stmt.body, newenv)
         ret_typ = Ctr.normalize(stmt.ret_typ)
-        do_typecheck(ret_typ, body, newenv, stmt)
+        do_typecheck(ret_typ, body, newenv, stmt, variance: :contravariant)
         env[stmt.name] = Ctr.new(:Arrow, [*typs, body])
       else
         fail "bad stmt #{stmt}"
@@ -397,12 +406,17 @@ class Typechecker
     end
   end
 
+  def ret(expr, t)
+    puts("#{expr} : #{t}")
+    t
+  end
+
   def typecheck_expr(expr, env)
     case expr
     when OpenStruct 
       case expr.typ
       when :as_block
-        typecheck_expr(expr.val, env)
+        ret(expr, typecheck_expr(expr.val, env))
       when :if_
         cond = typecheck_expr(expr.cond, env)
         fail "type error expected Boolean, found #{cond} #{cond.class}" \
@@ -410,31 +424,25 @@ class Typechecker
         then_ = typecheck_expr(expr.then_, env)
         else_ = typecheck_expr(expr.else_, env)
         do_typecheck(then_, else_, env, expr)
-        then_
+        ret(expr, then_)
       when :call
         f = typecheck_expr(expr.func, env)
         args = expr.args.map {|arg| Ctr.normalize(typecheck_expr(arg, env)) }
         return args.last if f == Object
         case f
         when TypRule # this is for builtin functions with custom typechecking
-          return f.run(self, args, env)
+          return ret(expr, f.run(self, args, env))
         end
         fnorm = Ctr.normalize(f)
         case fnorm
-        when Class
-          if fnorm == Method
-          else
-            fail "invalid function type #{fnorm} in #{expr}"
-          end
         when Ctr
           fargs = fnorm.args[..-2]
           fail "arity error, expected #{fargs.size} arguments, but found #{args.size} in #{expr}" \
             if fargs.size != args.size
-
           fargs.zip(args).each do |farg, arg|
             do_typecheck(farg, arg, env, expr)
           end
-          return fnorm.args.last
+          return ret(expr, fnorm.args.last)
         else
           fail "typecheck_expr invalid function type #{fnorm}"
         end
@@ -442,7 +450,7 @@ class Typechecker
         newenv = env.merge(stmt.args.to_h)
         typs = stmt.args.map {|x| x[1..] }
         tbody = typecheck_expr(expr.body, newenv)
-        Ctr.new(:Arrow, [*typs, tbody])
+        ret(expr, Ctr.new(:Arrow, [*typs, tbody]))
       else
         fail "bad expr OpenStruct --> #{expr}"
       end
@@ -465,8 +473,7 @@ class Typechecker
     end
   end
 
-
-  def do_typecheck(farg, arg, env, expr)
+  def do_typecheck(farg, arg, env, expr, variance: :covariant)
     case [farg, arg].map(&:class)
     when [Symbol, Class]
       do_typecheck(typecheck_expr(farg, env), arg, env, expr)
@@ -475,9 +482,15 @@ class Typechecker
     when [Class, Symbol]
       do_typecheck(farg, typecheck_expr(arg, env), env, expr)
     when [Class, Class]
-      fail "type error, expecting #{farg}, but found #{arg}, in #{expr}" unless arg <= farg
+      case variance
+      when :covariant
+        fail "type error, expecting #{farg}, but found #{arg}, in #{expr}" unless arg <= farg
+      when :contravariant
+        fail "type error, expecting #{farg}, but found #{arg}, in #{expr}" unless arg >= farg
+      else
+        fail "do_typecheck : invalid variance #{variance}"
+      end
     else
-      return nil if farg == Object
       fail "type error strict, expecting #{farg}, but found #{arg}, in #{expr}" unless arg == farg
     end
   end
@@ -486,10 +499,10 @@ end
 
 ast = Parser.new.parse(<<END
 
-fun inc(x : Integer) : Integer = add(x, 1);
 
 fun main() : NilClass = do
-    puts({1 => 2, 3 => true});
+    puts(method(method(File, "open", String, File)("/etc/hosts"), "read", String)());
+    puts(method(1, "+", Integer, Integer)(1));
 end;
 END
 )

@@ -356,6 +356,10 @@ class Typechecker
       case stmt.typ
       when :fun
         newenv = env.merge(stmt.args.to_h)
+        if ENV["ENABLE_RECURSION"]
+          ftyp = Ctr.new(:Arrow, [*stmt.args.map {|x| x[1..]}, stmt.ret_typ].map(&Ctr.method(:normalize)))
+          newenv = newenv.merge({ stmt.name => ftyp })
+        end
         typs = stmt.args.map {|x| x[1..] }
         body = typecheck_expr(stmt.body, newenv)
         ret_typ = Ctr.normalize(stmt.ret_typ)
@@ -375,7 +379,6 @@ class Typechecker
       case expr.typ
       when :if_
         cond = typecheck_expr(expr.cond, env)
-        p cond
         fail "type error expected Boolean, found #{cond} #{cond.class}" \
           unless cond == Boolean
         then_ = typecheck_expr(expr.then_, env)
@@ -462,7 +465,7 @@ fun fact(x : Integer) : Integer =
     else mul(x, fact(sub(x, 1)));
 
 fun main() : NilClass = do
-    puts(inc(1));
+    puts(fact(5));
 end;
 END
 )

@@ -61,9 +61,20 @@ class Parser
       }
   words : words WORD { [val[0], val[1]] } | WORD | "(" words ")" { val[1] }
   # typ : typ WORD | WORD | typ "->" typ | "(" typ ")"
-  expr : if_ | do_ | expr_0
+  expr : if_ | do_ | let | expr_0
   expr_0 : call | expr_1
   expr_1 : atom
+
+  let : "let" WORD ":" typ "=" expr "in" expr 
+      # let x = y  in z ~> (fun x => z) y
+      { OpenStruct.new(typ: :call, 
+                       func: OpenStruct.new(typ: :fun, 
+                                            name: "_let_#{object_id}", 
+                                            args: [ [val[1].to_sym, val[3]] ],
+                                            ret_typ: nil,
+                                            body: val[7]),
+                       args: [val[5]])
+      }
 
   exprs_sc : expr ";" exprs_sc
   { [val[0], val[2]].flatten } 
@@ -378,6 +389,8 @@ class Typechecker
         case obj
         when Symbol
           t = env[[obj, meth.to_sym]]
+          t ||= env[obj]
+          t
         else
           obj = typechecker.typecheck_expr(obj, env)
           obj = obj.to_s.to_sym if obj.is_a?(Class)
@@ -482,10 +495,16 @@ class Typechecker
         else
           fail "typecheck_expr invalid function type #{fnorm}"
         end
-       when :fun
-        newenv = env.merge(stmt.args.to_h)
-        typs = stmt.args.map {|x| x[1..] }
+      when :fun
+        newenv = env.merge(expr.args.to_h)
+        typs = expr.args.map {|x| x[1..] }
         tbody = typecheck_expr(expr.body, newenv)
+        if expr.ret_typ.nil?
+          expr.ret_typ = tbody
+        else
+          do_typecheck(tbody, expr.ret_typ)
+        end
+
         ret(expr, Ctr.new(:Arrow, [*typs, tbody]))
       else
         fail "bad expr OpenStruct --> #{expr}"
@@ -535,16 +554,11 @@ end
 
 ast = Parser.new.parse(<<END
 
-type File.open : String -> ! File;
-type File.read : [! File] -> String;
-type File.write : [! File] String -> NilClass;
-type File.close : [! File] -> NilClass;
+type File.open : String -> File;
+type File.read : [File] -> String;
 
-fun foo() : File = File.open("/tmp/foo");
+fun f(x : File) : String = x.read();
 
-fun main() : NilClass = do
-    puts(foo().read());
-end;
 END
 )
 # pp ast

@@ -30,23 +30,29 @@ class Parser
   stmts : stmt ";" stmts { 
           [val[0], val[2]].flatten } 
         | stmt ";" { [val[0]] }
-  stmt : fun
+  stmt : fun | typ_decl
+
+  typ_decl : "type" fqdn ":" typ { 
+        OpenStruct.new(typ: :typ_decl, name: val[1], value: val[3]) }
+
+  fqdn : WORD "." fqdn { [val[0], *val[2]] } | WORD 
 
   fun : "fun" WORD "(" args ")" ":" typ "=" expr
-       { OpenStruct.new(typ: :fun, name: val[1], args: val[3], ret_typ: val[6].first,  body: val[8]) }
+       { OpenStruct.new(typ: :fun, name: val[1], args: val[3], ret_typ: val[6],  body: val[8]) }
   fun : "fun" WORD "(" ")" ":" typ "=" expr
       { 
          t = val[5]
-         t = t.first unless t.is_a? Ctr
+         # t = t.first unless t.is_a? Ctr
         OpenStruct.new(typ: :fun, name: val[1], args: [], ret_typ: t, body: val[7]) 
       }
   args : arg "," args { [val[0], *val[2]] } | arg { [val[0]] }
   arg : WORD ":" typ { [val[0], val[2]] }
   typ : typ "->" typ { 
         Ctr.new(:Arrow, [val[0], val[2]].flatten) }
+      | "->" typ { Ctr.new(:Arrow, [val[1]]) }
       | "!" words { "!#{val[1]}".to_sym }
       | words {
-        if val[0].size == 1
+        if val.size == 1
           val[0]
         else
           val
@@ -90,7 +96,7 @@ end
 
 ---- inner
 
-KEYWORDS = %w(fun let in if then else true false do end nil)
+KEYWORDS = %w(fun let in if then else true false do end nil type)
 SYMBOLS = %w(; : => = ( ) , ! -> { } . [ ] & ").map { |x| Regexp.quote(x) }
 def readstring(s)
   acc = []
@@ -269,6 +275,8 @@ class Interpreter
       case stmt.typ
       when :fun
         env[stmt.name] = eval_expr(stmt, env)
+      when :typ_decl
+        nil
       else
         eval_expr(stmt, env)
       end
@@ -332,7 +340,7 @@ class TypRule
     @name = name
   end
 
-  def run(typechecker, env, *args)
+  def run(typechecker, env, args)
     @block.call(typechecker, env, args)
   end
 end
@@ -345,14 +353,14 @@ global_env = {
   eq: ->(a, b) { a == b },
   seq: ->(*args) { args&.last },
   index: ->(ar, idx) { ar[idx] },
-  method: ->(obj, m, t1, *t2) { obj.method(m) }
+  method: ->(obj, m) { obj.method(m) }
 }
 
 class Typechecker
   def global_env
     {
       eq: Ctr.new(:Arrow, [Object, Object, Boolean]),
-      seq: TypRule.new(:seq) do |typechecker, args, env|
+      seq: TypRule.new(:seq) do |typechecker, env, args|
         *args, last = args
         args.each do |arg|
           typechecker.typecheck_expr(arg, env)
@@ -364,14 +372,20 @@ class Typechecker
       add: Ctr.new(:Arrow, [Integer, Integer, Integer]),
       sub: Ctr.new(:Arrow, [Integer, Integer, Integer]),
       mul: Ctr.new(:Arrow, [Integer, Integer, Integer]),
-      method: TypRule.new(:method) do |typechecker, args, env|
-        obj, meth, t1, t2 = args
-        args.each {|x| typechecker.typecheck_expr(x, env) }
-        if t2.nil?
-          Ctr.new(:Arrow, [t1])
+      method: TypRule.new(:method) do |typechecker, env, args|
+        obj, meth = args
+        case obj
+        when Symbol
+          t = env[[obj, meth.to_sym]]
         else
-          Ctr.new(:Arrow, [t1, t2])
+          puts "foooooooooooo #{obj}"
+          obj = typechecker.typecheck_expr(obj, env)
+          obj = obj.to_s.to_sym if obj.is_a?(Class)
+          t = env[[obj, meth.to_sym]]
         end
+        fail "unbounded method method(#{obj}, \"#{meth}\")" \
+             if t.nil?
+        t 
       end,
     }
   end
@@ -398,6 +412,9 @@ class Typechecker
         ret_typ = Ctr.normalize(stmt.ret_typ)
         do_typecheck(ret_typ, body, newenv, stmt, variance: :contravariant)
         env[stmt.name] = Ctr.new(:Arrow, [*typs, body])
+      when :typ_decl
+        env[stmt.name] = stmt.value
+        nil
       else
         fail "bad stmt #{stmt}"
       end
@@ -407,7 +424,7 @@ class Typechecker
   end
 
   def ret(expr, t)
-    puts("#{expr} : #{t}")
+    # puts("#{expr} : #{t}")
     t
   end
 
@@ -428,10 +445,9 @@ class Typechecker
       when :call
         f = typecheck_expr(expr.func, env)
         args = expr.args.map {|arg| Ctr.normalize(typecheck_expr(arg, env)) }
-        return args.last if f == Object
         case f
         when TypRule # this is for builtin functions with custom typechecking
-          return ret(expr, f.run(self, args, env))
+          return ret(expr, f.run(self, env, expr.args))
         end
         fnorm = Ctr.normalize(f)
         case fnorm
@@ -499,10 +515,11 @@ end
 
 ast = Parser.new.parse(<<END
 
+type File.open : String -> File;
+type File.read : -> String;
 
 fun main() : NilClass = do
-    puts(method(method(File, "open", String, File)("/etc/hosts"), "read", String)());
-    puts(method(1, "+", Integer, Integer)(1));
+    puts(File.open("/etc/hosts").read());
 end;
 END
 )

@@ -466,6 +466,27 @@ class Typechecker
         end
         fnorm = Ctr.normalize(f)
         case fnorm
+        when Class
+          if expr.func&.func == :method
+            obj_sym, meth_str = expr.func.args
+            obj = typecheck_expr(obj_sym, env)
+            k = [obj, meth_str.to_sym]
+            t = env[k]
+            fail "unbounded method #{exr.func}" if t.nil?
+            this_expected_type = t.args[0]
+            method_type = t.args[1]
+            do_typecheck(this_expected_type, obj, env, expr)
+            targs = t.args[1].args[0..-2]
+            fail "arity error, expected #{targs.size} but found #{expr.args.size}" \
+              unless targs.size == expr.args.size
+            args = expr.args.map {|x| typecheck_expr(x, env) }
+            targs.zip(args).each do |a, b|
+              do_typecheck(a, b, env, expr)
+            end
+            Ctr.normalize(t.args[1].args.last)
+          else
+            fail "todo"
+          end
         when Ctr
           case fnorm.name
           when :MethodCall
@@ -556,11 +577,17 @@ ast = Parser.new.parse(<<END
 
 type File.open : String -> File;
 type File.read : [File] -> String;
+type File.close : [File] -> NilClass;
 
 fun f(x : File) : String = x.read();
 
+fun main() : NilClass =
+    let x : File = File.open("/etc/hosts") in
+    let y : Integer = 1 in
+    puts(f(x));
 END
 )
 # pp ast
 Typechecker.new.typecheck(ast)
-# Interpreter.new.run(ast, global_env)
+Interpreter.new.run(ast, global_env)
+

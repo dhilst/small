@@ -378,7 +378,6 @@ class Typechecker
         when Symbol
           t = env[[obj, meth.to_sym]]
         else
-          puts "foooooooooooo #{obj}"
           obj = typechecker.typecheck_expr(obj, env)
           obj = obj.to_s.to_sym if obj.is_a?(Class)
           t = env[[obj, meth.to_sym]]
@@ -413,6 +412,8 @@ class Typechecker
         do_typecheck(ret_typ, body, newenv, stmt, variance: :contravariant)
         env[stmt.name] = Ctr.new(:Arrow, [*typs, body])
       when :typ_decl
+        fail "#{stmt.name} is already defined as #{env[stmt.name]}, refusing to override it" \
+          if env.key?(stmt.name)
         env[stmt.name] = stmt.value
         nil
       else
@@ -518,8 +519,10 @@ ast = Parser.new.parse(<<END
 type File.open : String -> File;
 type File.read : -> String;
 
+fun foo() : File = File.open("/etc/hosts");
+
 fun main() : NilClass = do
-    puts(File.open("/etc/hosts").read());
+    puts(foo().read());
 end;
 END
 )

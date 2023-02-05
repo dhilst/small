@@ -575,16 +575,10 @@ end
 
 ast = Parser.new.parse(<<END
 
-type File.open : String -> File;
-type File.read : [File] -> String;
-type File.close : [File] -> NilClass;
-
-fun f(x : File) : String = x.read();
+type Hash.dig : [Hash] Integer -> String;
 
 fun main() : NilClass =
-    let x : File = File.open("/etc/hosts") in
-    let y : Integer = 1 in
-    puts(f(x));
+    puts({0 => "Hello world"}.dig(0));
 END
 )
 # pp ast

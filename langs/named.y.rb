@@ -51,15 +51,9 @@ class Parser
         Ctr.new(:Arrow, [val[0], val[2]].flatten) }
       | "[" typ "]" typ { Ctr.new(:MethodCall, [val[1], val[3]]) }
       | "->" typ { Ctr.new(:Arrow, [val[1]]) }
-      | "!" words { val[1].to_sym  }
-      | words {
-        if val.size == 1
-          val[0]
-        else
-          val
-        end
-      }
-  words : words WORD { [val[0], val[1]] } | WORD | "(" words ")" { val[1] }
+      | WORD "(" typ_args ")" { Ctr.new(val[0], [val[2]]) }
+      | WORD
+  typ_args : typ "," typ_args { [val[0], *val[2]] } | typ
   # typ : typ WORD | WORD | typ "->" typ | "(" typ ")"
   expr : if_ | do_ | let | expr_0
   expr_0 : call | expr_1
@@ -566,6 +560,9 @@ class Typechecker
       else
         fail "do_typecheck : invalid variance #{variance}"
       end
+    when [Class, Ctr]
+      return if farg == Object && variance == :covariant
+      fail "todo"
     else
       fail "type error strict, expecting #{farg}, but found #{arg}, in #{expr}" unless arg == farg
     end
@@ -575,13 +572,18 @@ end
 
 ast = Parser.new.parse(<<END
 
-type Hash.dig : [Hash] Integer -> String;
+type File.open : String -> File;
+type File.readlines : [File] -> Array(String);
 
-fun main() : NilClass =
-    puts({0 => "Hello world"}.dig(0));
+fun foo(x : Array(String)) : NilClass =
+    puts(x);
+
+fun main() : NilClass = do
+    foo(File.open("/etc/hosts").readlines());
+end;
 END
 )
-# pp ast
+pp ast
 Typechecker.new.typecheck(ast)
 Interpreter.new.run(ast, global_env)
 

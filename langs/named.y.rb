@@ -9,9 +9,9 @@ class Parser
     nonassoc "&"
     nonassoc "."
     nonassoc ","
+    right "->"
     nonassoc "[" "]"
     nonassoc "{" "}"
-    right "->"
     left "*" "/"
     left "+" "-"
     nonassoc "true" "false" "nil"
@@ -49,8 +49,9 @@ class Parser
   arg : WORD ":" typ { [val[0], val[2]] }
   typ : typ "->" typ { 
         Ctr.new(:Arrow, [val[0], val[2]].flatten) }
+      | "[" typ "]" typ { Ctr.new(:MethodCall, [val[1], val[3]]) }
       | "->" typ { Ctr.new(:Arrow, [val[1]]) }
-      | "!" words { "!#{val[1]}".to_sym }
+      | "!" words { val[1].to_sym  }
       | words {
         if val.size == 1
           val[0]
@@ -453,13 +454,31 @@ class Typechecker
         fnorm = Ctr.normalize(f)
         case fnorm
         when Ctr
-          fargs = fnorm.args[..-2]
-          fail "arity error, expected #{fargs.size} arguments, but found #{args.size} in #{expr}" \
-            if fargs.size != args.size
-          fargs.zip(args).each do |farg, arg|
-            do_typecheck(farg, arg, env, expr)
+          case fnorm.name
+          when :MethodCall
+            this_expected, typ = fnorm.args # (foo()) .read() ...  foo() : [this]
+            fail "invalid argument" unless expr.func.is_a?(OpenStruct) && expr.func.typ == :call &&
+                                           expr.func.func == :method
+            this_real, funcargs = expr.func.args.map {|x| Ctr.normalize(typecheck_expr(x, env)) }
+            do_typecheck(this_expected, this_real, env, expr)
+            fargs = typ.args[..-2]
+            fail "arity error, expected #{fargs.size} arguments, but found #{args.size} in #{expr}" \
+              if fargs.size != args.size
+            fargs.zip(args).each do |farg, arg|
+              do_typecheck(farg, arg, env, expr)
+            end
+            return ret(expr, typ.args.last)
+          when :Arrow
+            fargs = fnorm.args[..-2]
+            fail "arity error, expected #{fargs.size} arguments, but found #{args.size} in #{expr}" \
+              if fargs.size != args.size
+            fargs.zip(args).each do |farg, arg|
+              do_typecheck(farg, arg, env, expr)
+            end
+            return ret(expr, fnorm.args.last)
+          else
+            fail "invalid Ctr, #{fnorm}"
           end
-          return ret(expr, fnorm.args.last)
         else
           fail "typecheck_expr invalid function type #{fnorm}"
         end
@@ -516,10 +535,12 @@ end
 
 ast = Parser.new.parse(<<END
 
-type File.open : String -> File;
-type File.read : -> String;
+type File.open : String -> ! File;
+type File.read : [! File] -> String;
+type File.write : [! File] String -> NilClass;
+type File.close : [! File] -> NilClass;
 
-fun foo() : File = File.open("/etc/hosts");
+fun foo() : File = File.open("/tmp/foo");
 
 fun main() : NilClass = do
     puts(foo().read());
@@ -528,4 +549,4 @@ END
 )
 # pp ast
 Typechecker.new.typecheck(ast)
-Interpreter.new.run(ast, global_env)
+# Interpreter.new.run(ast, global_env)

@@ -328,6 +328,17 @@ ruby small.rb < somefile
    > f (fun x => false)
    false : int
    ```
+   * Now I have this error `Error : type error unification error int
+     <> bool in ``(fun _ => id 1) (id true)'`
+     * In fact the behavior is correct regarding the fact that we do
+       not have let polymorphism. When typechecking `id true` the
+       typechecker learns that `id : bool -> bool`, the way that this
+       happens in code is confuse and can be improved but the behavior
+       is correct. Then when checking `id 1` we get a type error.
+     * The way that this happens in code is that the `a` variable
+       in the `id : foral a . a -> a` is refined to `bool` and to
+       `int` and we get a unification problem like this `a = int, a = bool`,
+        which reduces to `a = bool [int/a]`, then `int = bool`.
 
 
 

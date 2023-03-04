@@ -725,7 +725,9 @@ class REPL
     Readline::HISTORY.push(*File.readlines(history_path))
     loop do
       line = Readline.readline("> ", true)&.rstrip
-      if line.empty?
+      if line.nil? # Ctrl+D
+        break
+      elsif line.empty?
         Readline::HISTORY.pop
         next
       elsif line == Readline::HISTORY.to_a[-2]

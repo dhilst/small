@@ -27,12 +27,12 @@ class Parser
 
   val : "val" WORD "=" expr_0 { Val.new(val[1], val[3]) }
 
-  expr_0 : lamb | let | if_ | match | expr_1
+  expr_0 : typ_intro | lamb | let | if_ | match | expr_1
   expr_1 : app | expr_2
   expr_2 : atom
 
-  lamb : "fun" WORD "=>" expr_0 { Lamb.new(val[1], nil, val[3]) }
-       | "fun" WORD ":" typ_scheme "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
+  typ_intro : "typ" WORD "=>" expr_0 { TypIntro.new(val[1], val[3]) }
+  lamb : "fun" WORD ":" typ_scheme "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
   app : expr_1 expr_2 { App.new(val[0], val[1]) }
   atom : WORD | const | "(" expr_0 ")" { val[1] }
   const : INT | BOOL | STRING
@@ -47,26 +47,16 @@ class Parser
   pattern : "|" pat "=>" expr_0 { MatchPattern.new(val[1], val[3]) }
   pat : WORD pat { [val[0], val[1]].flatten } | WORD
 
-  typ_scheme : "forall" typ_args "." typ_expr { TypeScheme.new(val[1], val[3]) }
+  typ_scheme : "forall" WORD "." typ_expr { TypeScheme.new(val[1], val[3]) }
              | typ_expr
-  typ_args : WORD typ_args { [UVar.new(val[0].to_s), val[1]].flatten } 
-           | WORD { [UVar.new(val[0])] }
   typ_expr : typ_arrow | typ_base
-  typ_arrow : typ_base "->" typ_expr { UFun.new(:arrow, [val[0], val[2]]) }
-  typ_base : WORD { typ_var_of_sym(val[0]) } | "(" typ_expr ")" { val[1] }
+  typ_arrow : typ_base "->" typ_expr { TypFun.new(val[0], val[2]) }
+  typ_base : WORD | "(" typ_expr ")" { val[1] }
 end
 
 ---- inner
-KEYWORDS = %w(data match with end let in fun val if then else true false forall)
+KEYWORDS = %w(typ data match with end let in fun val if then else true false forall)
 SYMBOLS = %w(=> -> . | ; = ( ) :).map { |x| Regexp.quote(x) }
-
-def typ_var_of_sym(val)
-  if val.size == 1
-    UVar.new(val.to_sym)
-  else
-    UFun.new(val.to_sym, [])
-  end
-end
 
 def readstring(s)
   acc = []
@@ -141,6 +131,7 @@ class Val < Struct.new :name, :value; def to_s; Unparser.new.unparse([self]); en
 class Match < Struct.new :scrutinee, :patterns; def to_s; Unparser.new.unparse([self]); end; end
 class MatchPattern < Struct.new :pat, :body; def to_s; Unparser.new.unparse([self]); end; end
 class If < Struct.new :cond, :then_, :else_; def to_s; Unparser.new.unparse([self]); end; end
-class TypeScheme < Struct.new :args, :typ; end
-class UVar < Struct.new :letter; end
-class UFun < Struct.new :name, :args; end
+class TypScheme < Struct.new :var, :expr; end
+class TypIntro < Struct.new :var, :expr; end
+class TypApp < Struct.new :typ, :arg; end
+class TypFun < Struct.new :tin, :tout; end

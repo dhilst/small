@@ -3,6 +3,7 @@ require "set"
 require "readline"
 require "fileutils"
 require "./parser"
+
 # Receives an AST and return a simpler AST with only
 # Val, App, Lamb, Symbol (denoting variables) and constants
 class Desuger
@@ -17,37 +18,6 @@ class Desuger
     init = Lamb.new(arg, nil, body)
     args.reverse.reduce(init) do |acc, arg|
       Lamb.new(arg, nil, acc)
-    end
-  end
-
-  def self.tlamb2(*args, body)
-    *args, arg = args
-    args.reverse.reduce(Lamb.new(arg.keys.first, arg.values.first, body)) do |acc, arg|
-      Lamb.new(arg.keys.first, arg.values.first, acc)
-    end
-  end
-
-  def self.tlamb(*targs_body)
-    fresh_vars = FreshVars.new
-    *args, last_arg, body = targs_body
-    t = fresh_vars.use!(UVar.new(last_arg.values.first)) if last_arg.values.first.is_a? Symbol
-    fail "nil type #{targs_body}" if t.nil?
-    init = Lamb.new(last_arg.keys.first, t, body)
-    args.reverse.reduce(init) do |acc, arg|
-      if arg.values.first.is_a? Symbol
-        t = fresh_vars.use!(UVar.new(arg.values.first))
-      else
-        t = arg.values.first
-      end
-      Lamb.new(arg.keys.first, t, acc)
-    end
-  end
-
-  def self.app2(*exprs)
-    e1, e2, *exprs = exprs
-    init = App.new(e1, e2)
-    exprs.reduce(init) do |acc, arg|
-      App.new(acc, arg)
     end
   end
 
@@ -128,7 +98,7 @@ class Desuger
 
   def desugar_expr(expr)
     case expr
-    when Integer, Symbol, TrueClass, FalseClass, If, String
+    when Integer, Symbol, TrueClass, FalseClass, If, String, TypIntro
       expr
     when App
       App.new(desugar_expr(expr.f), desugar_expr(expr.arg))
@@ -210,11 +180,22 @@ class Unparser
       expr.dump
     when Let
       "let #{expr.x} = #{unparse_expr(expr.e1)} in #{unparse_expr(expr.e2)}"
+    when TypScheme
+      "forall #{expr.var} . #{unparse_expr(expr.expr)}"
+    when TypIntro
+      "typ #{expr.var} => #{unparse_expr(expr.expr)}"
+    when TypFun
+      case expr.tin
+      when TypFun, App
+        "(#{unparse_expr(expr.tin)}) -> #{unparse_expr(expr.tout)}"
+      else
+        "#{unparse_expr(expr.tin)} -> #{unparse_expr(expr.tout)}"
+      end
     when Lamb
       "fun #{expr.arg} => #{unparse_expr(expr.body)}"
     when App
       f = case expr.f
-          when Lamb, Let
+          when Lamb, Let, TypIntro
               "(#{unparse_expr(expr.f)})"
           else
             unparse_expr(expr.f)
@@ -233,6 +214,8 @@ class Unparser
       "if #{unparse_expr(expr.cond)}\n" +
         "then #{unparse_expr(expr.then_)}\n" +
         "else #{unparse_expr(expr.else_)}"
+    when Class
+      expr.name
     else
       fail "unparse error : bad expression #{expr}"
     end
@@ -254,351 +237,127 @@ class Unparser
   end
 end
 
-class UFun
-  def to_s
-    return "#{name}" if args.empty?
-
-    case name
-    when :arrow
-      fail "invalid arrow it should have exactly 2 arguments, but found #{args}" if args.size != 2
-      if (args[0].is_a?(UFun) and args[0].name == :arrow) or (args[0].is_a? TypeScheme)
-        "(#{args[0]}) -> #{args[1]}"
-      else
-        "#{args[0]} -> #{args[1]}"
-      end
-    else
-      "#{name} #{args.join(' ')}"
-    end
-  end
-end
-
-class UVar
-  def initialize(x)
-    fail "UVar.initialize invalid argument #{x.class}" unless x.is_a? Symbol
-    super(x)
-  end
-  def to_s
-    "#{letter}"
-  end
-end
-
-class FreshVars
-  def initialize
-    @available = ("a".."z").to_a.map {|x| UVar.new(x.to_sym) }.to_set
-  end
-
-  def use!(x)
-    fail "use! invalid argument #{x.class}" unless x.is_a? UVar
-    @available -= Set.new([x])
-    x
-  end
-
-  def fresh!
-    x = @available.to_a.first
-    use!(x)
-  end
-end
-
-class Unifier
-  def self.unify(problems)
-    return [] if problems.empty?
-    p, *problems = problems
-    a, b = p
-    case [a,b].map(&:class)
-    when [UVar, UVar]
-      if a == b
-        unify(problems)
-      else
-        problems = problems.map do |k, v|
-          [subst(a, b, k), subst(a, b, v)]
-        end
-        [[a, b]] + unify(problems)
-      end
-    when [UFun, UVar]
-      unify([[b, a]] + problems) # swap
-    when [UFun, UFun]
-      fail "unification error #{a} <> #{b}" if a.name != b.name or a.args.size != b.args.size
-      unify(a.args.zip(b.args) + problems)
-    when [UVar, UFun]
-      fail "unification error #{a} occurs in #{b}" if occurs(a, b)
-      problems = problems.map do |k, v|
-        [subst(a, b, k), subst(a, b, v)]
-      end
-      [[a, b]] + unify(problems)
-    else
-      fail "unify : invalid argument #{a.class} #{b.class}"
-    end
-  end
-
-  def self.subst_env(subs, env)
-    env.map do |k, v|
-      [k, substm(subs, v)]
-    end.to_h
-  end
-
-  def self.substm(subs, term)
-    subs.reduce(term) do |term, s|
-      k, v = s
-      subst(k, v, term)
-    end
-  end
-
-  def self.subst(k, v, term)
-    case term
-    when UFun
-      UFun.new(term.name, term.args.map {|arg| subst(k, v, arg)})
-    when UVar
-      return v if term == k
-      term
-    when TypeScheme
-      return term if term.args.include? k
-      subst(k, v, term.typ)
-    else
-      fail "subst : invalid argument #{k} #{v} #{term}"
-    end
-  end
-
-  def self.occurs(a, b)
-    fail "occurs : invalid argument #{a} #{b}" unless a.is_a? UVar
-    case b
-    when UVar
-      a == b
-    when UFun
-      b.args.any? do |barg|
-        occurs(a, barg)
-      end
-    when TypeScheme
-      return false if b.args.include? a 
-      occurs(a, b.typ)
-    else
-      fail "occurs : invalid argument, #{b}"
-    end
-  end
-end
-
-class TypeScheme
-  def instantiate(fresh_vars)
-    vars = args.map do |arg|
-      arg = arg.instantiate(fresh_vars) if arg.is_a? TypeScheme
-      [arg, fresh_vars.fresh!]
-    end
-    Unifier.substm(vars, typ)
-  end
-
-  def self.generalize(typ, env)
-    vs = vars(typ).reject {|v| env.has_value? v}
-    TypeScheme.new(vs, typ)
-  end
-
-  def self.vars(typ)
-    case typ
-    when UVar
-      [typ]
-    when UFun
-      typ.args.map do |arg|
-        vars(arg)
-      end.flatten.uniq.sort_by(&:to_s)
-    when TypeScheme
-      vars(typ.typ).reject { |x| typ.args.include? x }
-    else
-      fail "vars : invalid argument #{typ.class} #{typ}<---"
-    end
-  end
-
-  def self.expr_vars(expr, tenv)
-    case expr
-    when Lamb
-      typ = vars(expr.typ) unless expr.typ.nil?
-      Set.new(typ) | expr_vars(expr.body, tenv)
-    when App
-      expr_vars(expr.f, tenv) | expr_vars(expr.arg, tenv)
-    when If
-      expr_vars(expr.cond, tenv) | expr_vars(expr.then_, tenv) | expr_vars(expr.else_, tenv)
-    when Integer, String, TrueClass, FalseClass
-      Set.new([])
-    when Symbol
-      if tenv.key? expr
-        Set.new(vars(tenv[expr]))
-      else
-        Set.new([])
-      end
-    else
-      fail "expr_vars : invalid argument #{expr}"
-    end
-  end
-
-  # replace the type variables with new variables
-  # in alphabetical order, so forall e h . e -> (e -> h) -> h
-  # becomes forall a b -> a -> (a -> b) -> b
-  def normalize
-    vars_ = TypeScheme.vars(typ).reject {|x| args.include?(x) }
-    args_ = args + vars_
-    subst = args_.zip(alpha)
-    new_args = subst.take(args.size).map {|x| x[1]}
-    TypeScheme.new(new_args, Unifier.substm(subst, typ))
-  end
-
-  def to_s
-    return typ.to_s if args.empty?
-    "forall #{args.join(' ')} . #{typ}"
-  end
-end
-
 class Typechecker
-  def typecheck(stmts)
-    env = global_env
-    stmts.map do |stmt|
-      stmt, t = typecheck_stmt(stmt, env)
-      [stmt, t]
+  def typecheck(stmts, tenv)
+    tenv = tenv.merge(global_tenv)
+    results = stmts.map do |stmt|
+      stmt, result, tenv = typecheck_stmt(stmt, tenv)
     end
+
+    results_final = results.map {|x, _| x}
+    env = results.last[1]
+    [results_final, env]
   end
 
-  def typecheck_stmt_repl(stmt, env)
-    stmt, t = typecheck_stmt(stmt, env)
-    [stmt, t, env]
-  end
-
-  def global_env
-    int = UFun.new(:int, [])
-    bool = UFun.new(:bool, [])
-    str = UFun.new(:string, [])
-    a = UVar.new(:a)
-    b = UVar.new(:b)
-    env = {
-      eq: TypeScheme.new([a], Typechecker.arrow(a, a, bool)),
-      sub: TypeScheme.new([], Typechecker.arrow(int, int, int)),
-      add: TypeScheme.new([], Typechecker.arrow(int, int, int)),
-      mul: TypeScheme.new([], Typechecker.arrow(int, int, int)),
-      not: TypeScheme.new([], Typechecker.arrow(bool, bool)),
-      puts: TypeScheme.new([a], Typechecker.arrow(a, a)),
-      readfile: TypeScheme.new([], Typechecker.arrow(str, str)),
-      unify: TypeScheme.new([], Typechecker.arrow(a, a, a)),
-    }
-    env[:fix] = TypeScheme.new([a, b],
-                               Typechecker.arrow(Typechecker.arrow(Typechecker.arrow(a, b), a, b), a, b)) \
-      if ENV["ENABLE_FIXPOINT"]
-    env
-  end
-
-  def self.arrow(*args)
-    *args, a, b = args
-    init = UFun.new(:arrow, [a, b])
-    args.reverse.reduce(init) do |acc, arg|
-      UFun.new(:arrow, [arg, acc])
-    end
+  def typecheck_stmt_repl(stmt, tenv)
+    typecheck_stmt(stmt, tenv)
   end
 
   private
 
-  def typecheck_stmt(stmt, env)
-    fresh_vars = FreshVars.new
+  def global_tenv 
+    {
+      puts: TypScheme.new(:a, TypFun.new(:a, NilClass)),
+      debug_type: TypScheme.new(:a , TypFun.new(:a , NilClass)),
+    }
+  end
+
+  def typecheck_stmt(stmt, tenv)
+    fail "nil typeenv" if tenv.nil?
+    
     case stmt
-    when Val
-      vars_in_use = TypeScheme.expr_vars(stmt.value, env)
-      vars_in_use.each { |x| fresh_vars.use!(x) }
-      t, val, _ = typecheck_expr(stmt.value, env, fresh_vars)
-      env[stmt.name] = TypeScheme.generalize(t, env)
-      [Val.new(stmt.name, val), t, env]
+    in Val(name:, value:) then
+      tvalue = typecheck_expr(value, tenv)
+      [stmt, tvalue, tenv.merge({name => tvalue})]
+    in App | Lamb | If | Number | Symbol then
+      [stmt, typecheck_expr(stmt, tenv), tenv]
     else
-      vars_in_use = TypeScheme.expr_vars(stmt, env)
-      vars_in_use.each { |x| fresh_vars.use!(x) }
-      t, stmt, _ = typecheck_expr(stmt, env, fresh_vars)
-      t = TypeScheme.new([], t)
-      [stmt, t, env]
+      fail "todo typecheck_stmt #{stmt} : #{stmt.class}"
     end
   end
 
-  def typecheck_expr(expr, env, fresh_vars)
+  def typecheck_expr(expr, tenv)
     case expr
-    when String
-      [UFun.new(:string, []), expr, []]
-    when Integer
-      [UFun.new(:int, []), expr, []]
-    when TrueClass, FalseClass
-      [UFun.new(:bool, []), expr, []]
-    when Symbol
-      fail "unbound variable #{expr}" unless env.key? expr
-      [env[expr].instantiate(fresh_vars), expr, []]
-    when Lamb
-      case expr.typ
-      when TypeScheme
-        targ = expr.typ.instantiate(fresh_vars)
-        newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
-        tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
-        targ2 = Unifier.substm(sbody, targ)
-        # I'm imitating ocaml here, not sure if this implementation is correct
-        typ = UFun.new(:arrow, [targ, tbody]) # the original type after instantiation
-        typ2 = UFun.new(:arrow, [targ2, tbody]) # the infered type
-        typ3 = UFun.new(:arrow, [expr.typ, tbody]) # the original type wihtout instantiation
-        fail "type error : #{typ2} is less general than #{typ3} in #{expr}" if typ != typ2
-        lamb = Lamb.new(expr.arg, expr.typ, body)
-        return [typ3, lamb, sbody]
-      when UFun, UVar
-        targ = expr.typ
-      when NilClass
-        targ = fresh_vars.fresh!
+    in TypIntro(tvar, expr) then 
+      texpr = typecheck_expr(expr, tenv.merge({tvar => :type}))
+      TypScheme.new(tvar, texpr)
+    in (Integer | String) then
+      expr.class
+    in Lamb(arg:, typ:, body:) then
+      check_type(typ, tenv)
+      tbody = typecheck_expr(body, tenv.merge({arg => typ}))
+      TypFun.new(typ, tbody)
+    in Symbol => s then
+      type_get(s, tenv)
+    in App(f:, arg:) then
+      tfun = typecheck_expr(f, tenv)
+      targ = typecheck_expr(arg, tenv)
+      
+      if tfun.is_a? TypScheme
+        arg = type_get(arg, tenv)
+        tfun = tsubst(tfun.var, arg, tfun.expr)
       end
-      newenv = env.merge({ expr.arg => TypeScheme.new([], targ) })
-      tbody, body, sbody = typecheck_expr(expr.body, newenv, fresh_vars)
-      tbody = Unifier.substm(sbody, tbody)
-      targ = Unifier.substm(sbody, targ)
-      typ = UFun.new(:arrow, [targ, tbody])
-      lamb = Lamb.new(expr.arg, targ, body)
-      [typ, lamb, sbody]
-    when App
-      if expr.f == :debug_type
-        # if the expression is `debug_type foo`
-        # print the type of `foo` and return `foo`
-        targ, arg, sarg = typecheck_expr(expr.arg, env, fresh_vars)
-        targ = Unifier.substm(sarg, targ)
-        puts "#{expr.arg} : #{targ}"
-        [targ, arg, sarg]
-      else
-        tfunc, f, sfunc = typecheck_expr(expr.f, env, fresh_vars)
-        targ, arg, sarg = typecheck_expr(expr.arg, env, fresh_vars)
-        tfunc = tfunc.instantiate(fresh_vars) if tfunc.is_a? TypeScheme
-        if tfunc.is_a? UFun
-          tfunc = UFun.new(tfunc.name, tfunc.args.map do |x|
-            if x.is_a? TypeScheme
-              x.instantiate(fresh_vars)
-            else
-              x
-            end
-          end)
-          sarg2 = unify(expr, [[targ, tfunc.args[0]]] + sfunc + sarg)
-          tresult = Unifier.substm(sarg2, tfunc)
-          app = App.new(f, arg)
-          [tresult.args[1], app, sarg2]
-        else
-          tfunc2 = UFun.new(:arrow, [targ, fresh_vars.fresh!])
-          sfunc2 = unify(expr, [[tfunc, tfunc2]] + sfunc + sarg)
-          tresult = Unifier.substm(sfunc2, tfunc2)
-          app = App.new(f, arg)
-          [tresult.args[1], app, sfunc2]
-        end
-      end
-    when If
-      tcond, cond, scond = typecheck_expr(expr.cond, env, fresh_vars)
-      scond2 = Unifier.unify([[tcond, UFun.new(:bool, [])]])
-      tthen, then_, sthen = typecheck_expr(expr.then_, env, fresh_vars)
-      telse, else_, selse = typecheck_expr(expr.else_, env, fresh_vars)
-      sthenelse = unify(expr, [[tthen, telse]] + sthen + selse)
-      tif = Unifier.substm(sthenelse, tthen)
-      if_ = If.new(cond, then_, else_)
-      [tif, if_, sthenelse + scond + scond2]
+
+      fail "Expecting a function type, found #{tfun}" unless tfun.is_a? TypFun
+      fail "Expecting '#{tfun.tin.class}' found '#{targ.class}'" unless tfun.tin == targ
+      
+      tfun.tout
     else
-      # PS in [let x = ... in ...], [x] is not universally
-      # quantified. [let] is just sugar for application, only [val x =
-      # ...] constructs are universally quantified.
-      fail "typecheck_expr : invalid argument #{expr}"
+      fail "todo typecheck_expr #{expr} : #{expr.class}"
     end
   end
 
-  def unify(expr, args)
-    Unifier.unify(args)
-  rescue StandardError => e
-    raise e unless e.to_s.include?("unification error")
-    fail "type error #{e} in `#{expr}'"
+  def type_get(typ, tenv)
+      return tenv[typ] if tenv.key? typ
+      
+      begin
+        return Object.const_get(typ)
+      rescue StandardError
+        fail "unbounded type #{typ}"
+      end
+  end
+
+  def tsubst(sym, value, texpr)
+    case texpr
+    in Symbol then
+      if texpr == sym
+        value
+      else
+        texpr
+      end
+    in TypFun(tin:, tout:) then
+      TypFun.new(tsubst(sym, value, tin), tsubst(sym, value, tout))
+    in TypApp(typ:, arg:) then
+      TypApp.new(tsubst(sym, value, typ), tsubst(sym, value, arg))
+    in TypScheme(var:, expr:) then
+      if var == sym
+        texpr
+      else
+        TypScheme.new(var, tsubst(sym, value, expr))
+      end
+    else
+      const_types = [Integer, String, TrueClass, FalseClass, NilClass]
+      if const_types.include?(texpr)
+        return texpr
+      end
+      fail "todo tsubst #{texpr}"
+    end
+    
+    
+  end
+  def check_type(typ, tenv)
+    case typ
+    when Symbol
+      if tenv.key? typ
+        return tenv[typ]
+      end
+
+      begin
+        return Object.const_get(typ)
+      rescue StandardError
+        fail "unbounded type #{typ}" unless tenv.key? typ
+      end
+s    end
   end
 end
 
@@ -621,7 +380,6 @@ class Interpreter
       eq: ->(a, b) { a == b }.curry,
       readfile: ->(a) { File.read(a) },
       not: ->(a) { not a },
-      unify: ->(a, b) { a }.curry,
     }
   end
 
@@ -667,8 +425,13 @@ class Interpreter
     when Lamb
       ->(x) { eval_expr(expr.body, env.merge({expr.arg => x})) }
     when Symbol
-      fail "Unbounded symbol #{expr}" unless env.key? expr
-      eval_expr(env[expr], env)
+      # @TODO: Deal with types like Integer
+      # ex: (typ a => fun x : a => x) Integer
+      if env.key? expr
+        eval_expr(env[expr], env)
+      end
+
+      fail "Unbounded symbol #{expr}"
     when If
       cond = eval_expr(expr.cond, env)
       if cond
@@ -676,7 +439,9 @@ class Interpreter
       else
         eval_expr(expr.else_, env)
       end
-    when Method, Proc, Integer, String, NilClass, TrueClass, FalseClass # puts return nil
+    when TypIntro
+      eval_expr(expr.expr, env)
+    when Class, Method, Proc, Integer, String, NilClass, TrueClass, FalseClass # puts return nil
       expr
     else
       fail "bad expression #{expr.class} #{expr}"
@@ -698,9 +463,11 @@ class Runner
 
   def run(text)
     ast = @parser.parse(text)
-    ast = @desuger.desugar(ast)
-    @typechecker.typecheck(ast)
-    @interpreter.eval(ast)
+    # ast = @desuger.desugar(ast)
+    ast, tresults, tenv = @typechecker.typecheck(ast, {})
+    puts(@unparser.unparse(ast))
+    puts(@unparser.unparse([tresults]))
+    # @interpreter.eval(ast)
     nil
   end
 end
@@ -712,7 +479,7 @@ class REPL
     @desuger = Desuger.new
     @typechecker = Typechecker.new
     @interpreter = Interpreter.new
-    @tenv = @typechecker.global_env
+    @tenv = {}
     @ienv = @interpreter.global_env
   end
 
@@ -747,9 +514,7 @@ class REPL
   private 
 
   def run_stmt_text(stmt_text)
-    if stmt_text == "reset vars"
-      UVar.reset!
-    elsif stmt_text == "ienv"
+    if stmt_text == "ienv"
       pp @ienv
     elsif stmt_text == "tenv"
       pp @tenv
@@ -761,14 +526,14 @@ class REPL
         when Symbol
           fail "unbounded variable #{stmt}" unless @tenv.key? stmt
           t = @tenv[stmt]
-          puts "#{stmt} : #{t}"
+          puts "#{stmt} : #{@unparser.unparse([t])}"
         else
           stmt, t, @tenv = @typechecker.typecheck_stmt_repl(stmt, @tenv)
           value,  @ienv = @interpreter.eval_stmt_repl(stmt, @ienv)
           if [Proc, Method].include?(value.class) || stmt.is_a?(Val)
-            puts "#{stmt} : #{t}"
+            puts "#{@unparser.unparse([stmt])} : #{@unparser.unparse([t])}"
           else 
-            puts "#{@unparser.unparse([value])} : #{t}"
+            puts "#{@unparser.unparse([value])} : #{@unparser.unparse([t])}"
           end
         end
       end

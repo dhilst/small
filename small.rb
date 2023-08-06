@@ -475,7 +475,7 @@ class Typechecker
       unify: TypeScheme.new([], Typechecker.arrow(a, a, a)),
     }
     env[:fix] = TypeScheme.new([a, b],
-                              Typechecker.arrow(Typechecker.arrow(Typeschecker.arrow(a, b), a, b), a, b)) \
+                               Typechecker.arrow(Typechecker.arrow(Typechecker.arrow(a, b), a, b), a, b)) \
       if ENV["ENABLE_FIXPOINT"]
     env
   end

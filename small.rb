@@ -255,10 +255,15 @@ class Typechecker
 
   private
 
+  def unparser
+    @unparser ||= Unparser.new
+  end
+
   def global_tenv 
     {
       puts: TypScheme.new(:a, TypFun.new(:a, NilClass)),
       debug_type: TypScheme.new(:a , TypFun.new(:a , NilClass)),
+      add: TypFun.new(Integer, TypFun.new(Integer, Integer)),
     }
   end
 
@@ -269,7 +274,7 @@ class Typechecker
     in Val(name:, value:) then
       tvalue = typecheck_expr(value, tenv)
       [stmt, tvalue, tenv.merge({name => tvalue})]
-    in App | Lamb | If | Number | Symbol then
+    in App | Lamb | If | Integer | Symbol | TypIntro then
       [stmt, typecheck_expr(stmt, tenv), tenv]
     else
       fail "todo typecheck_stmt #{stmt} : #{stmt.class}"
@@ -278,28 +283,40 @@ class Typechecker
 
   def typecheck_expr(expr, tenv)
     case expr
+    in Class then
+      fail "invalid type #{expr}" unless [Integer, String, NilClass, TrueClass, FalseClass].include?(expr)
+
+      return expr
+    in (TypFun | TypScheme) then
+      expr
     in TypIntro(tvar, expr) then 
       texpr = typecheck_expr(expr, tenv.merge({tvar => :type}))
       TypScheme.new(tvar, texpr)
     in (Integer | String) then
       expr.class
     in Lamb(arg:, typ:, body:) then
-      check_type(typ, tenv)
+      typ = typecheck_expr(typ, tenv)
       tbody = typecheck_expr(body, tenv.merge({arg => typ}))
       TypFun.new(typ, tbody)
     in Symbol => s then
       type_get(s, tenv)
     in App(f:, arg:) then
-      tfun = typecheck_expr(f, tenv)
       targ = typecheck_expr(arg, tenv)
-      
+      if f == :debug_type
+        puts("#{unparser.unparse([arg])} : #{unparser.unparse([targ])}")
+        return targ
+      else
+        tfun = typecheck_expr(f, tenv)
+      end
+
       if tfun.is_a? TypScheme
         arg = type_get(arg, tenv)
         tfun = tsubst(tfun.var, arg, tfun.expr)
+        return tfun
       end
 
       fail "Expecting a function type, found #{tfun}" unless tfun.is_a? TypFun
-      fail "Expecting '#{tfun.tin.class}' found '#{targ.class}'" unless tfun.tin == targ
+      fail "Expecting '#{tfun.tin}' found '#{targ}' in <#{expr}>" unless tfun.tin == targ
       
       tfun.tout
     else
@@ -308,7 +325,7 @@ class Typechecker
   end
 
   def type_get(typ, tenv)
-      return tenv[typ] if tenv.key? typ
+      return typecheck_expr(tenv[typ], tenv) if tenv.key? typ
       
       begin
         return Object.const_get(typ)
@@ -342,22 +359,6 @@ class Typechecker
       end
       fail "todo tsubst #{texpr}"
     end
-    
-    
-  end
-  def check_type(typ, tenv)
-    case typ
-    when Symbol
-      if tenv.key? typ
-        return tenv[typ]
-      end
-
-      begin
-        return Object.const_get(typ)
-      rescue StandardError
-        fail "unbounded type #{typ}" unless tenv.key? typ
-      end
-s    end
   end
 end
 
@@ -372,7 +373,7 @@ class Interpreter
 
   def global_env
     {
-      puts: ->(a) { puts a; a },
+      puts: ->(_, a) { puts(a) }.curry,
       fix: method(:fix).curry,
       add: ->(a, b) { a + b }.curry,
       mul: ->(a, b) { a * b }.curry,
@@ -428,10 +429,12 @@ class Interpreter
       # @TODO: Deal with types like Integer
       # ex: (typ a => fun x : a => x) Integer
       if env.key? expr
-        eval_expr(env[expr], env)
+        return eval_expr(env[expr], env)
+      elsif Object.const_defined?(expr)
+        return Object.const_get(expr)
       end
 
-      fail "Unbounded symbol #{expr}"
+      fail "Unbounded symbol #{expr} #{env}"
     when If
       cond = eval_expr(expr.cond, env)
       if cond
@@ -465,9 +468,7 @@ class Runner
     ast = @parser.parse(text)
     # ast = @desuger.desugar(ast)
     ast, tresults, tenv = @typechecker.typecheck(ast, {})
-    puts(@unparser.unparse(ast))
-    puts(@unparser.unparse([tresults]))
-    # @interpreter.eval(ast)
+    @interpreter.eval(ast)
     nil
   end
 end

@@ -290,9 +290,9 @@ class Typechecker
     in (TypFun | TypScheme) then
       expr
     in TypIntro(tvar, expr) then 
-      texpr = typecheck_expr(expr, tenv.merge({tvar => :type}))
+      texpr = typecheck_expr(expr, tenv.merge({tvar => :Type}))
       TypScheme.new(tvar, texpr)
-    in (Integer | String) then
+    in (Integer | String | TrueClass | FalseClass) then
       expr.class
     in Lamb(arg:, typ:, body:) then
       typ = typecheck_expr(typ, tenv)
@@ -325,13 +325,14 @@ class Typechecker
   end
 
   def type_get(typ, tenv)
-      return typecheck_expr(tenv[typ], tenv) if tenv.key? typ
-      
-      begin
-        return Object.const_get(typ)
-      rescue StandardError
-        fail "unbounded type #{typ}"
-      end
+    return :Type if typ == :Type
+    return typecheck_expr(tenv[typ], tenv) if tenv.key? typ
+    
+    begin
+      return Object.const_get(typ)
+    rescue StandardError
+      fail "unbounded type #{typ}"
+    end
   end
 
   def tsubst(sym, value, texpr)

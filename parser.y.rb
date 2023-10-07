@@ -55,7 +55,7 @@ class Parser
 end
 
 ---- inner
-KEYWORDS = %w(type data match with end let in fun val if then else true false forall)
+KEYWORDS = %w(typ data match with end let in fun val if then else true false forall)
 SYMBOLS = %w(=> -> . | ; = ( ) :).map { |x| Regexp.quote(x) }
 
 def readstring(s)

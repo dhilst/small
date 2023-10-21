@@ -3,8 +3,13 @@
 # Simple ML like language using Scott encoding
 
 class Parser
+  prechigh
+    left '->'
+  preclow
+
   token WORD INT BOOL STRING
   options no_result_var
+
 
   start main
 
@@ -13,50 +18,35 @@ class Parser
   main : stmts { [val[0]].flatten }
 
   stmts : stmts ";" stmt { [val[0], val[2]] } | stmt
-  stmt : data | val | expr_0
-
-  data : "data" WORD args "=" ctrs
-       { DataType.new(val[1], [val[2]].flatten, [val[4]].flatten) }
-       | "data" WORD "=" ctrs
-       { DataType.new(val[1], nil, [val[3]].flatten)  }
-  args : args WORD { [val[0], val[1]] } | WORD
-  ctrs : ctr "|" ctrs { [val[0], val[2]] }
-       | ctr
-  ctr : ctr WORD { Ctr.new(val[0].name, [*val[0].args, val[1]].flatten) }
-      | WORD { Ctr.new(val[0]) }
+  stmt : val | expr_0
 
   val : "val" WORD "=" expr_0 { Val.new(val[1], val[3]) }
 
-  expr_0 : typ_intro | lamb | let | if_ | match | expr_1
-  expr_1 : app | expr_2
-  expr_2 : atom
+  expr_0 : typ_intro | typ_scheme | lamb | let | if_ | expr_1
+  expr_1 : bin_expr | expr_2
+  expr_2 : app | expr_3
+  expr_3 : atom
 
-  typ_intro : "typ" WORD "=>" expr_0 { TypIntro.new(val[1], val[3]) }
-  lamb : "fun" WORD ":" typ_scheme "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
-  app : expr_1 expr_2 { App.new(val[0], val[1]) }
-  atom : WORD | const | "(" expr_0 ")" { val[1] }
+  bin_expr : expr_1 bin_op expr_2 { TypApp.new("(#{val[1]})".to_sym, TypApp.new(val[0], val[2])) }
+  bin_op : "->" | "+" | "*" | "-" | "/" | "." | "|"
+  typ_intro : "type" WORD ":" expr_0 "=>" expr_0 { TypIntro.new(val[1], val[3], val[5]) }
+  lamb : "func" WORD ":" expr_0 "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
+  app : expr_2 expr_3 { App.new(val[0], val[1]) }
+  atom : WORD 
+       | const 
+       | "(" expr_0 ")" { val[1] } 
   const : INT | BOOL | STRING
   let : "let" WORD "=" expr_0 "in" expr_0
       { Let.new(val[1], val[3], val[5]) }
-  match : "match" expr_0 "with" patterns "end"
-  { Match.new(val[1], [val[3]].flatten) }
   if_ : "if" expr_0 "then" expr_0 "else" expr_0
       { If.new(val[1], val[3], val[5]) }
-  patterns : pattern patterns { [val[0], val[1]] }
-           | pattern
-  pattern : "|" pat "=>" expr_0 { MatchPattern.new(val[1], val[3]) }
-  pat : WORD pat { [val[0], val[1]].flatten } | WORD
 
-  typ_scheme : "forall" WORD "." typ_expr { TypeScheme.new(val[1], val[3]) }
-             | typ_expr
-  typ_expr : typ_arrow | typ_base
-  typ_arrow : typ_base "->" typ_expr { TypFun.new(val[0], val[2]) }
-  typ_base : WORD | "(" typ_expr ")" { val[1] }
+  typ_scheme : "forall" WORD "." expr_0 { TypScheme.new(val[1], val[3]) }
 end
 
 ---- inner
-KEYWORDS = %w(typ data match with end let in fun val if then else true false forall)
-SYMBOLS = %w(=> -> . | ; = ( ) :).map { |x| Regexp.quote(x) }
+KEYWORDS = %w(type data match with end let in func val if then else true false forall)
+SYMBOLS = %w(=> -> . | ; = ( ) : + - * /).map { |x| Regexp.quote(x) }
 
 def readstring(s)
   acc = []
@@ -84,7 +74,7 @@ def make_tokens str
     when s.scan(/#/)
       s.skip_until(/$/)
     when tok = s.scan(/(#{SYMBOLS.join("|")})/)
-      result << [tok, nil]
+      result << [tok, tok.to_sym]
     when tok = s.scan(/\b(#{KEYWORDS.join("|")})\b/)
       case tok
       when "true"
@@ -92,7 +82,7 @@ def make_tokens str
       when "false"
         result << [:BOOL, false]
       else
-        result << [tok, nil]
+        result << [tok, tok.to_sym]
       end
     when tok = s.scan(/"/)
       result << [:STRING, readstring(s)]
@@ -122,16 +112,20 @@ end
 
 ---- header
 
-class DataType < Struct.new :name, :args, :ctrs; def to_s; Unparser.new.unparse([self]); end; end
-class Ctr < Struct.new :name, :args; def to_s; Unparser.new.unparse([self]); end; end
-class App < Struct.new :f, :arg; def to_s; Unparser.new.unparse([self]); end; end
-class Let < Struct.new :x, :e1, :e2; def to_s; Unparser.new.unparse([self]); end; end
-class Lamb < Struct.new :arg, :typ, :body; def to_s; Unparser.new.unparse([self]); end; end
-class Val < Struct.new :name, :value; def to_s; Unparser.new.unparse([self]); end; end
-class Match < Struct.new :scrutinee, :patterns; def to_s; Unparser.new.unparse([self]); end; end
-class MatchPattern < Struct.new :pat, :body; def to_s; Unparser.new.unparse([self]); end; end
-class If < Struct.new :cond, :then_, :else_; def to_s; Unparser.new.unparse([self]); end; end
-class TypScheme < Struct.new :var, :expr; end
-class TypIntro < Struct.new :var, :expr; end
-class TypApp < Struct.new :typ, :arg; end
-class TypFun < Struct.new :tin, :tout; end
+module Unparsable
+  def to_s; Unparser.new.unparse([self]); end
+end
+
+class DataType < Struct.new :name, :args, :ctrs; include Unparsable; end
+class Ctr < Struct.new :name, :args; include Unparsable; end
+class App < Struct.new :f, :arg; include Unparsable; end
+class Let < Struct.new :x, :e1, :e2; include Unparsable; end
+class Lamb < Struct.new :arg, :typ, :body; include Unparsable; end
+class Val < Struct.new :name, :value; include Unparsable; end
+class Match < Struct.new :scrutinee, :patterns; include Unparsable; end
+class MatchPattern < Struct.new :pat, :body; include Unparsable; end
+class If < Struct.new :cond, :then_, :else_; include Unparsable; end
+class TypScheme < Struct.new :var, :expr; include Unparsable; end
+class TypIntro < Struct.new :var, :kind, :expr; include Unparsable; end
+class TypApp < Struct.new :typ, :arg; include Unparsable; end
+class TypFun < Struct.new :tin, :tout; include Unparsable; end

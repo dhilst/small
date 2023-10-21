@@ -183,7 +183,7 @@ class Unparser
     when TypScheme
       "forall #{expr.var} . #{unparse_expr(expr.expr)}"
     when TypIntro
-      "typ #{expr.var} => #{unparse_expr(expr.expr)}"
+      "type #{expr.var} : #{expr.kind} => #{unparse_expr(expr.expr)}"
     when TypFun
       case expr.tin
       when TypFun, App
@@ -191,8 +191,15 @@ class Unparser
       else
         "#{unparse_expr(expr.tin)} -> #{unparse_expr(expr.tout)}"
       end
+    when TypApp
+      case expr.typ
+      when TypApp
+        "(#{expr.typ}) #{expr.arg}"        
+      else
+        "#{expr.typ} #{expr.arg}"
+      end
     when Lamb
-      "fun #{expr.arg} => #{unparse_expr(expr.body)}"
+      "func #{expr.arg} : #{expr.typ} => #{unparse_expr(expr.body)}"
     when App
       f = case expr.f
           when Lamb, Let, TypIntro
@@ -217,7 +224,7 @@ class Unparser
     when Class
       expr.name
     else
-      fail "unparse error : bad expression #{expr}"
+      fail "unparse error : bad expression #{expr} : #{expr.class}"
     end
   end
 
@@ -237,7 +244,7 @@ class Unparser
   end
 end
 
-class Typechecker
+class Interpreter
   def typecheck(stmts, tenv)
     tenv = tenv.merge(global_tenv)
     results = stmts.map do |stmt|
@@ -253,8 +260,6 @@ class Typechecker
     typecheck_stmt(stmt, tenv)
   end
 
-  private
-
   def unparser
     @unparser ||= Unparser.new
   end
@@ -264,6 +269,7 @@ class Typechecker
       puts: TypScheme.new(:a, TypFun.new(:a, NilClass)),
       debug_type: TypScheme.new(:a , TypFun.new(:a , NilClass)),
       add: TypFun.new(Integer, TypFun.new(Integer, Integer)),
+      Type: :Type,
     }
   end
 
@@ -289,25 +295,25 @@ class Typechecker
       return expr
     in (TypFun | TypScheme) then
       expr
-    in TypIntro(tvar, expr) then 
-      texpr = typecheck_expr(expr, tenv.merge({tvar => :Type}))
+    in TypIntro(tvar, kind, expr) then 
+      texpr = typecheck_expr(expr, tenv.merge({ tvar => kind }))
       TypScheme.new(tvar, texpr)
     in (Integer | String | TrueClass | FalseClass) then
       expr.class
     in Lamb(arg:, typ:, body:) then
-      typ = typecheck_expr(typ, tenv)
       tbody = typecheck_expr(body, tenv.merge({arg => typ}))
       TypFun.new(typ, tbody)
     in Symbol => s then
       type_get(s, tenv)
     in App(f:, arg:) then
-      targ = typecheck_expr(arg, tenv)
       if f == :debug_type
-        puts("#{unparser.unparse([arg])} : #{unparser.unparse([targ])}")
+        targ = typecheck_expr(arg, tenv)
+        puts("---> debug_type <#{unparser.unparse([arg])}> : #{unparser.unparse([targ])}")
         return targ
-      else
-        tfun = typecheck_expr(f, tenv)
       end
+
+      tfun = typecheck_expr(f, tenv)
+      targ = typecheck_expr(arg, tenv)
 
       if tfun.is_a? TypScheme
         arg = type_get(arg, tenv)
@@ -315,18 +321,25 @@ class Typechecker
         return tfun
       end
 
+      tin = tfun.tin
+      tin = type_get(tin, tenv) if tin.is_a? Symbol
+      targ = type_get(targ, tenv) if targ.is_a? Symbol
+
+      if tin == :Type
+        puts("fooooooooooO #{targ}")
+      end
+
       fail "Expecting a function type, found #{tfun}" unless tfun.is_a? TypFun
-      fail "Expecting '#{tfun.tin}' found '#{targ}' in <#{expr}>" unless tfun.tin == targ
+      fail "Expecting '#{tfun}' found '#{targ}' in <#{expr}>" unless tin == targ
       
-      tfun.tout
+      return tfun.tout
     else
-      fail "todo typecheck_expr #{expr} : #{expr.class}"
+      fail "todo typecheck_expr <#{expr} : #{expr.class}>"
     end
   end
 
   def type_get(typ, tenv)
-    return :Type if typ == :Type
-    return typecheck_expr(tenv[typ], tenv) if tenv.key? typ
+    return tenv[typ] if tenv.key? typ
     
     begin
       return Object.const_get(typ)
@@ -361,9 +374,7 @@ class Typechecker
       fail "todo tsubst #{texpr}"
     end
   end
-end
 
-class Interpreter
   def eval(stmts)
     eval_stmts(stmts, global_env)
   end
@@ -418,24 +429,26 @@ class Interpreter
         f = eval_expr(expr.f, env)
         arg = eval_expr(expr.arg, env)
         case f
+        when TypIntro
+          return eval_expr(arg, env)
         when Proc, Method
-          eval_expr(f.call(arg), env)
+          return eval_expr(f.call(arg), env)
         else
-          fail "bad application #{expr}"
+          fail "Expect <#{f}> to be a function but found #{f.class}"
         end
       end
     when Lamb
       ->(x) { eval_expr(expr.body, env.merge({expr.arg => x})) }
     when Symbol
-      # @TODO: Deal with types like Integer
-      # ex: (typ a => fun x : a => x) Integer
       if env.key? expr
         return eval_expr(env[expr], env)
-      elsif Object.const_defined?(expr)
-        return Object.const_get(expr)
+      else
+        begin
+          return Object.const_get(expr)
+        rescue StandardError
+          fail "unbounded variable #{expr}"
+        end
       end
-
-      fail "Unbounded symbol #{expr} #{env}"
     when If
       cond = eval_expr(expr.cond, env)
       if cond
@@ -444,7 +457,7 @@ class Interpreter
         eval_expr(expr.else_, env)
       end
     when TypIntro
-      eval_expr(expr.expr, env)
+      expr
     when Class, Method, Proc, Integer, String, NilClass, TrueClass, FalseClass # puts return nil
       expr
     else
@@ -456,101 +469,5 @@ class Interpreter
   end
 end
 
-class Runner
-  def initialize
-    @parser = Parser.new
-    @unparser = Unparser.new
-    @desuger = Desuger.new
-    @typechecker = Typechecker.new
-    @interpreter = Interpreter.new
-  end
+puts(Parser.new.parse($stdin.read))
 
-  def run(text)
-    ast = @parser.parse(text)
-    # ast = @desuger.desugar(ast)
-    ast, tresults, tenv = @typechecker.typecheck(ast, {})
-    @interpreter.eval(ast)
-    nil
-  end
-end
-
-class REPL
-  def initialize
-    @parser = Parser.new
-    @unparser = Unparser.new
-    @desuger = Desuger.new
-    @typechecker = Typechecker.new
-    @interpreter = Interpreter.new
-    @tenv = {}
-    @ienv = @interpreter.global_env
-  end
-
-  def history_path
-    @history_path ||= File.expand_path('~/.small_history')
-  end
-
-  def run
-    FileUtils.touch(history_path) unless File.exist?(history_path)
-    Readline::HISTORY.push(*File.readlines(history_path))
-    loop do
-      line = Readline.readline("> ", true)&.rstrip
-      if line.nil? # Ctrl+D
-        break
-      elsif line.empty?
-        Readline::HISTORY.pop
-        next
-      elsif line == Readline::HISTORY.to_a[-2]
-        Readline::HISTORY.pop
-      end
-      break if line == "exit"
-      run_stmt_text(line)
-    rescue Interrupt
-      break
-    rescue StandardError => e
-      puts "Error : #{e}"
-      raise if ENV['THROW_ERROR']
-    end
-    File.write(history_path, Readline::HISTORY.to_a.join("\n"))
-  end
-
-  private 
-
-  def run_stmt_text(stmt_text)
-    if stmt_text == "ienv"
-      pp @ienv
-    elsif stmt_text == "tenv"
-      pp @tenv
-    else
-      ast = @parser.parse(stmt_text)
-      ast = @desuger.desugar(ast)
-      ast.each do |stmt|
-        case stmt
-        when Symbol
-          fail "unbounded variable #{stmt}" unless @tenv.key? stmt
-          t = @tenv[stmt]
-          puts "#{stmt} : #{@unparser.unparse([t])}"
-        else
-          stmt, t, @tenv = @typechecker.typecheck_stmt_repl(stmt, @tenv)
-          value,  @ienv = @interpreter.eval_stmt_repl(stmt, @ienv)
-          if [Proc, Method].include?(value.class) || stmt.is_a?(Val)
-            puts "#{@unparser.unparse([stmt])} : #{@unparser.unparse([t])}"
-          else 
-            puts "#{@unparser.unparse([value])} : #{@unparser.unparse([t])}"
-          end
-        end
-      end
-    end
-  end
-end
-
-def main
-  if $stdin.tty?
-    REPL.new.run
-  else
-    Runner.new.run($stdin.read)
-  end
-end
-
-if __FILE__ == $0 # hacky for debugging in irb
-  main
-end

@@ -193,7 +193,15 @@ class Unparser
       end
     when TypApp
       case expr.typ
-      when TypApp
+      in typ if typ.is_a?(Symbol) && typ.to_s.start_with?("(")
+        op = typ.to_s.slice(1, typ.length - 2).to_sym
+        case expr.arg
+        in TypApp(typ:, arg:)
+          return "#{typ} #{op} #{arg}"
+        else
+          fail "invalid binary expr #{expr}"
+        end
+      in TypApp
         "(#{expr.typ}) #{expr.arg}"        
       else
         "#{expr.typ} #{expr.arg}"

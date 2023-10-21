@@ -4,7 +4,7 @@
 
 class Parser
   prechigh
-    left '->'
+    right '->'
   preclow
 
   token WORD INT BOOL STRING
@@ -31,6 +31,7 @@ class Parser
   bin_op : "->" | "+" | "*" | "-" | "/" | "." | "|"
   typ_intro : "type" WORD ":" expr_0 "=>" expr_0 { TypIntro.new(val[1], val[3], val[5]) }
   lamb : "func" WORD ":" expr_0 "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
+       | "func" "(" bin_op ")" ":" expr_0 "=>" expr_0 { Lamb.new("(#{val[2]})", val[5], val[7]) }
   app : expr_2 expr_3 { App.new(val[0], val[1]) }
   atom : WORD 
        | const 

@@ -17,10 +17,11 @@ class Parser
 
   main : stmts { [val[0]].flatten }
 
-  stmts : stmts ";" stmt { [val[0], val[2]] } | stmt
+  stmts : stmt ";" stmts { [val[0], val[2]] } 
+        | stmt ";" { val[0] }
   stmt : val | expr_0
 
-  val : "val" WORD "=" expr_0 { Val.new(val[1], val[3]) }
+  val : "val" WORD ":" expr_0 "=" expr_0 { Val.new(val[1], val[3], val[5]) }
 
   expr_0 : typ_intro | typ_scheme | lamb | let | if_ | expr_1
   expr_1 : bin_expr | expr_2
@@ -30,24 +31,27 @@ class Parser
   bin_expr : expr_1 bin_op expr_2 { TypApp.new("(#{val[1]})".to_sym, TypApp.new(val[0], val[2])) }
   bin_op : "->" | "+" | "*" | "-" | "/" | "." | "|"
   typ_intro : "type" WORD ":" expr_0 "=>" expr_0 { TypIntro.new(val[1], val[3], val[5]) }
+    | "type" words "=>" expr_0 { TypIntro.new(val[1], nil, val[3]) }
   lamb : "func" WORD ":" expr_0 "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
-       | "func" "(" bin_op ")" ":" expr_0 "=>" expr_0 { Lamb.new("(#{val[2]})", val[5], val[7]) }
   app : expr_2 expr_3 { App.new(val[0], val[1]) }
   atom : WORD 
        | const 
        | "(" expr_0 ")" { val[1] } 
+       | "?" { Hole.new }
   const : INT | BOOL | STRING
   let : "let" WORD "=" expr_0 "in" expr_0
       { Let.new(val[1], val[3], val[5]) }
   if_ : "if" expr_0 "then" expr_0 "else" expr_0
       { If.new(val[1], val[3], val[5]) }
 
-  typ_scheme : "forall" WORD "." expr_0 { TypScheme.new(val[1], val[3]) }
+  typ_scheme : "forall" words "." expr_0 { TypScheme.new(val[1], val[3]) }
+
+  words : WORD { [val[0]] } | words WORD { [val[0], val[1]].flatten } | "()" { [] };
 end
 
 ---- inner
 KEYWORDS = %w(type data match with end let in func val if then else true false forall)
-SYMBOLS = %w(=> -> . | ; = ( ) : + - * /).map { |x| Regexp.quote(x) }
+SYMBOLS = %w(=> -> . | ; = ( ) : + - * / ?).map { |x| Regexp.quote(x) }
 
 def readstring(s)
   acc = []
@@ -122,7 +126,7 @@ class Ctr < Struct.new :name, :args; include Unparsable; end
 class App < Struct.new :f, :arg; include Unparsable; end
 class Let < Struct.new :x, :e1, :e2; include Unparsable; end
 class Lamb < Struct.new :arg, :typ, :body; include Unparsable; end
-class Val < Struct.new :name, :value; include Unparsable; end
+class Val < Struct.new :name, :typ, :value; include Unparsable; end
 class Match < Struct.new :scrutinee, :patterns; include Unparsable; end
 class MatchPattern < Struct.new :pat, :body; include Unparsable; end
 class If < Struct.new :cond, :then_, :else_; include Unparsable; end
@@ -130,3 +134,4 @@ class TypScheme < Struct.new :var, :expr; include Unparsable; end
 class TypIntro < Struct.new :var, :kind, :expr; include Unparsable; end
 class TypApp < Struct.new :typ, :arg; include Unparsable; end
 class TypFun < Struct.new :tin, :tout; include Unparsable; end
+class Hole < Struct.new; include Unparsable; end

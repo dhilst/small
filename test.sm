@@ -1,0 +1,101 @@
+val x : Int = 1;
+val y : Int = 1;
+val z : Int = x + y;
+
+# add function
+val add 
+    : Int -> Int -> Int
+    = func x : Int => 
+      func y : Int => 
+      x + y;
+
+# polymorphic id function
+val id
+    : forall A . A -> A
+    = type A : Type =>
+      func x : A =>
+      x;
+
+# Box<T> type constructor
+val Box
+  : Type -> Type
+  = type T : Type =>
+    forall R . (T -> R) -> R;
+
+# Box<T> value constructor
+val box
+  : forall T . T -> Box T
+  = type T : Type =>
+    func x : T =>
+    type R : Type =>
+    func k : T -> R =>
+    k x;
+
+# Box<T> value destructor
+val unbox
+  : forall T . Box T -> T
+  = type T : Type =>
+    func b : Box T =>
+    b (func x : T => x);
+
+val mybox : Box Int = box Int 1;
+# mybox : forall R . (Int -> R) -> R
+val myone : Int = unbox Int mybox;
+# <=> mybox (func x : Int => x)                 # unfold unbox
+# <=> (func x : Int => x) 1 : (Int -> Int) Int  # unfold mybox 
+# <=> 1 : Int                                   # simpl
+# QED
+
+
+val Bool
+  : Type
+  = forall R . R -> R -> R;
+
+# true & false are keywords
+val true_
+  : Bool
+  = type R : Type =>
+    func t : R =>
+    func f : R =>
+    t;
+ 
+val false_
+  : Bool
+  = type R : Type =>
+    func t : R =>
+    func f : R =>
+    f;
+
+# if function (defined as if_ because if is a keyword)
+val if_
+  : forall R . Bool -> R -> R -> R
+  = type R : Type =>
+    func b : Bool =>
+    func t : R =>
+    func f : R =>
+    b R t f;
+
+val returnsOne : Int = if_ Int true 1 2;
+val retursnTwo : Int = if_ Int false 1 2;
+
+val Option
+  : Type -> Type
+  = type T : Type =>
+    forall R . (T -> R) -> R -> R;
+
+val some 
+  : forall T . Option T
+  = type T : Type =>
+    func x : T =>
+    type R : Type =>
+    func some_ : T -> R =>
+    func none_ : R =>
+    some_ x;
+
+val none
+  : forall T . Option T
+  = type T : Type =>
+    type R : Type =>
+    func some_ : T -> R =>
+    func none_ : R =>
+    none_;

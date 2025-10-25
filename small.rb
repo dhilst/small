@@ -157,7 +157,7 @@ class Unparser
         "data #{stmt.name} = #{unparse_ctrs(stmt.ctrs)}"
       end
     when Val
-      "val #{stmt.name} =\n#{ident(2, unparse_expr(stmt.value))}"
+      "val #{stmt.name} : #{stmt.typ} =\n#{ident(2, unparse_expr(stmt.value))}"
     else
       unparse_expr(stmt)
     end
@@ -178,12 +178,18 @@ class Unparser
       expr.to_s
     when String
       expr.dump
+    when Hole
+      "?"
     when Let
       "let #{expr.x} = #{unparse_expr(expr.e1)} in #{unparse_expr(expr.e2)}"
     when TypScheme
-      "forall #{expr.var} . #{unparse_expr(expr.expr)}"
+      "forall #{expr.var.join(' ')} . #{unparse_expr(expr.expr)}"
     when TypIntro
-      "type #{expr.var} : #{expr.kind} => #{unparse_expr(expr.expr)}"
+      if expr.var.is_a?(Array)
+        "type #{expr.var.join(' ')} => #{unparse_expr(expr.expr)}"
+      else
+        "type #{expr.var} : #{expr.kind} => #{unparse_expr(expr.expr)}"
+      end
     when TypFun
       case expr.tin
       when TypFun, App

@@ -4,10 +4,13 @@
 
 class Parser
   prechigh
+    left '\''
     right '->'
+    left '*' '/'
+    left '+' '-'
   preclow
 
-  token WORD INT BOOL STRING
+  token NAME INT BOOL STRING
   options no_result_var
 
 
@@ -19,39 +22,46 @@ class Parser
 
   stmts : stmt ";" stmts { [val[0], val[2]] } 
         | stmt ";" { val[0] }
-  stmt : val | expr_0
+  stmt : val | typ | expr
 
-  val : "val" WORD ":" expr_0 "=" expr_0 { Val.new(val[1], val[3], val[5]) }
+  val : "val" NAME ":" expr "=" expr { Val.new(val[1], val[3], val[5]) }
+  typ : "typ" NAME "=" expr { Typ.new(val[1], val[3]) }
 
-  expr_0 : typ_intro | typ_scheme | lamb | let | if_ | expr_1
-  expr_1 : bin_expr | expr_2
-  expr_2 : app | expr_3
-  expr_3 : atom
+  expr
+    : expr_bin
+    | "forall" args "." expr "end" { TypScheme.new(val[1], val[3]) }
+    | "(" args ")" "=>" expr "end" { Lamb.new([], val[1], val[4]) }
+    | "<" args ">" "=>" expr "end" { Lamb.new(val[1], [], val[4]) }
+    | "<" args ">" "(" args ")" "=>" expr "end" { Lamb.new(val[1], val[4], val[7]) }
 
-  bin_expr : expr_1 bin_op expr_2 { TypApp.new("(#{val[1]})".to_sym, TypApp.new(val[0], val[2])) }
-  bin_op : "->" | "+" | "*" | "-" | "/" | "." | "|"
-  typ_intro : "type" WORD ":" expr_0 "=>" expr_0 { TypIntro.new(val[1], val[3], val[5]) }
-    | "type" words "=>" expr_0 { TypIntro.new(val[1], nil, val[3]) }
-  lamb : "func" WORD ":" expr_0 "=>" expr_0 { Lamb.new(val[1], val[3], val[5]) }
-  app : expr_2 expr_3 { App.new(val[0], val[1]) }
-  atom : WORD 
-       | const 
-       | "(" expr_0 ")" { val[1] } 
-       | "?" { Hole.new }
-  const : INT | BOOL | STRING
-  let : "let" WORD "=" expr_0 "in" expr_0
-      { Let.new(val[1], val[3], val[5]) }
-  if_ : "if" expr_0 "then" expr_0 "else" expr_0
-      { If.new(val[1], val[3], val[5]) }
+  args
+    : NAME ":" expr "," args { [Arg.new(val[0], val[2]), val[4]].flatten }
+    | NAME ":" expr { [Arg.new(val[0], val[2])] }
 
-  typ_scheme : "forall" words "." expr_0 { TypScheme.new(val[1], val[3]) }
+  expr_bin
+    : expr "->" expr { BinOp.new(val[0], "->".to_sym, val[2]) }
+    | expr "+" expr { BinOp.new(val[0], "+".to_sym, val[2]) }
+    | expr "-" expr { BinOp.new(val[0], "-".to_sym, val[2]) }
+    | expr "/" expr { BinOp.new(val[0], "/".to_sym, val[2]) }
+    | expr "*" expr { BinOp.new(val[0], "*".to_sym, val[2]) }
+    | expr_app
 
-  words : WORD { [val[0]] } | words WORD { [val[0], val[1]].flatten } | "()" { [] };
+  expr_app 
+    : expr_app expr_atom { App.new(val[0], val[1]) }
+    | expr_atom
+
+  expr_atom
+    : "(" expr ")" { Paren.new(val[1]) }
+    | NAME
+    | const 
+
+  const : INT;
+
 end
 
 ---- inner
-KEYWORDS = %w(type data match with end let in func val if then else true false forall)
-SYMBOLS = %w(=> -> . | ; = ( ) : + - * / ?).map { |x| Regexp.quote(x) }
+KEYNAMES = %w(typ fun val forall end)
+SYMBOLS = %w(< > => -> . | ; = ( ) : + - * / ? ,).map { |x| Regexp.quote(x) }
 
 def readstring(s)
   acc = []
@@ -80,7 +90,7 @@ def make_tokens str
       s.skip_until(/$/)
     when tok = s.scan(/(#{SYMBOLS.join("|")})/)
       result << [tok, tok.to_sym]
-    when tok = s.scan(/\b(#{KEYWORDS.join("|")})\b/)
+    when tok = s.scan(/\b(#{KEYNAMES.join("|")})\b/)
       case tok
       when "true"
         result << [:BOOL, true]
@@ -94,7 +104,7 @@ def make_tokens str
     when tok = s.scan(/\d+/)
       result << [:INT, tok.to_i]
     when tok = s.scan(/\w+/)
-      result << [:WORD, tok.to_sym]
+      result << [:NAME, tok.to_sym]
     else
       raise "can't recognize  <#{s.peek(5)}>"
     end
@@ -117,21 +127,49 @@ end
 
 ---- header
 
-module Unparsable
-  def to_s; Unparser.new.unparse([self]); end
+module Unparser
+
+  def to_s
+    show_paren = (ENV["SMALL_SHOW_PAREN"] || "0") != "0";
+
+    case self
+    when Typ
+      "type #{name} : #{typ};\n"
+    when Val
+      "val #{name}\n" \
+        "  : #{typ}\n" \
+        "  = #{value};\n"
+    when App
+      return "(#{f} #{arg})" if show_paren
+      "#{f} #{arg}"
+    when Arg
+      "#{name} : #{typ}"
+    when Lamb
+      tyargs_ = tyargs.empty? ? "": "<#{tyargs.join(', ')}>"
+      args_ = args.empty? ? "" : "(#{args.join(', ')})"
+      "#{tyargs_}#{args_} => #{body} end"
+    when TypScheme
+      args_ = args.join(", ")
+      "forall #{args_} . #{body}"
+    when BinOp
+      return "(#{fst} #{op} #{snd})" if show_paren
+      "#{fst} #{op} #{snd}"
+    when Hole
+      "?"
+    when Paren
+      "(#{value})"
+    else
+      raise "invalid ast node #{self.class}"
+    end
+  end
 end
 
-class DataType < Struct.new :name, :args, :ctrs; include Unparsable; end
-class Ctr < Struct.new :name, :args; include Unparsable; end
-class App < Struct.new :f, :arg; include Unparsable; end
-class Let < Struct.new :x, :e1, :e2; include Unparsable; end
-class Lamb < Struct.new :arg, :typ, :body; include Unparsable; end
-class Val < Struct.new :name, :typ, :value; include Unparsable; end
-class Match < Struct.new :scrutinee, :patterns; include Unparsable; end
-class MatchPattern < Struct.new :pat, :body; include Unparsable; end
-class If < Struct.new :cond, :then_, :else_; include Unparsable; end
-class TypScheme < Struct.new :var, :expr; include Unparsable; end
-class TypIntro < Struct.new :var, :kind, :expr; include Unparsable; end
-class TypApp < Struct.new :typ, :arg; include Unparsable; end
-class TypFun < Struct.new :tin, :tout; include Unparsable; end
-class Hole < Struct.new; include Unparsable; end
+class Typ < Struct.new :name, :typ; include Unparser; end
+class Val < Struct.new :name, :typ, :value; include Unparser; end
+class App < Struct.new :f, :arg; include Unparser; end
+class Arg < Struct.new :name, :typ; include Unparser; end;
+class TypScheme < Struct.new :args, :body; include Unparser; end
+class Lamb < Struct.new :tyargs, :args, :body; include Unparser; end
+class BinOp < Struct.new :fst, :op, :snd; include Unparser; end
+class Hole < Struct.new; include Unparser; end
+class Paren < Struct.new :value; include Unparser; end

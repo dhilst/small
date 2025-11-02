@@ -40,17 +40,12 @@ class Parser
     | NAME ":" expr { [Arg.new(val[0], val[2])] }
 
   expr_bin
-    : expr "->" expr { Arrow.new([val[0]], val[2]) }
-    | "(" expr "," targs ")" "->" expr { Arrow.new([val[1], val[3]].flatten, val[6]) }
+    : expr "->" expr { Arrow.new(val[0], val[2]) }
     | expr "+" expr { BinOp.new(val[0], "+".to_sym, val[2]) }
     | expr "-" expr { BinOp.new(val[0], "-".to_sym, val[2]) }
     | expr "/" expr { BinOp.new(val[0], "/".to_sym, val[2]) }
     | expr "*" expr { BinOp.new(val[0], "*".to_sym, val[2]) }
     | expr_app
-
-  targs
-    : expr "," targs
-    | expr
 
   expr_app 
     : expr_app expr_atom { App.new(val[0], val[1]) }
@@ -58,10 +53,15 @@ class Parser
 
   expr_atom
     : "(" expr ")" { Paren.new(val[1]) }
+    | "(" expr "," expr_seq ")" { Tuple.new([val[1], val[3]].flatten) }
     | NAME
     | const 
 
-  const : INT;
+  expr_seq
+    : expr "," expr_seq { [val[0], val[2]].flatten }
+    | expr
+
+  const : INT | STRING | BOOL | "?";
 
 end
 
@@ -156,18 +156,16 @@ module Unparser
       "fun #{tyargs_}#{args_} => #{body} end"
     when TypScheme
       args_ = args.join(", ")
-      "forall #{args_} . #{body}"
+      "forall #{args_} . #{body} end"
     when BinOp
       return "(#{fst} #{op} #{snd})" if show_paren
       "#{fst} #{op} #{snd}"
     when Hole
       "?"
     when Arrow
-      if args.length == 1
-        "#{args[0]} -> #{ret}"
-      else
-        "(#{args.join(', ')}) -> #{ret}"
-      end
+      "#{args} -> #{ret}"
+    when Tuple
+      "(#{values.join(', ')})"
     when Paren
       "(#{value})"
     else
@@ -186,3 +184,4 @@ class Arrow < Struct.new :args, :ret; include Unparser; end
 class BinOp < Struct.new :fst, :op, :snd; include Unparser; end
 class Hole < Struct.new; include Unparser; end
 class Paren < Struct.new :value; include Unparser; end
+class Tuple < Struct.new :values; include Unparser; end

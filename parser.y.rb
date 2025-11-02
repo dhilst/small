@@ -4,13 +4,14 @@
 
 class Parser
   prechigh
-    left '\''
+    left ','
     right '->'
     left '*' '/'
     left '+' '-'
+    nonassoc END
   preclow
 
-  token NAME INT BOOL STRING
+  token NAME INT BOOL STRING END
   options no_result_var
 
 
@@ -30,21 +31,26 @@ class Parser
   expr
     : expr_bin
     | "forall" args "." expr "end" { TypScheme.new(val[1], val[3]) }
-    | "(" args ")" "=>" expr "end" { Lamb.new([], val[1], val[4]) }
-    | "<" args ">" "=>" expr "end" { Lamb.new(val[1], [], val[4]) }
-    | "<" args ">" "(" args ")" "=>" expr "end" { Lamb.new(val[1], val[4], val[7]) }
+    | "fun" "(" args ")" "=>" expr "end" { Lamb.new([], val[2], val[5]) }
+    | "fun" "<" args ">" "=>" expr "end" { Lamb.new(val[2], [], val[5]) }
+    | "fun" "<" args ">" "(" args ")" "=>" expr "end" { Lamb.new(val[2], val[5], val[8]) }
 
   args
     : NAME ":" expr "," args { [Arg.new(val[0], val[2]), val[4]].flatten }
     | NAME ":" expr { [Arg.new(val[0], val[2])] }
 
   expr_bin
-    : expr "->" expr { BinOp.new(val[0], "->".to_sym, val[2]) }
+    : expr "->" expr { Arrow.new([val[0]], val[2]) }
+    | "(" expr "," targs ")" "->" expr { Arrow.new([val[1], val[3]].flatten, val[6]) }
     | expr "+" expr { BinOp.new(val[0], "+".to_sym, val[2]) }
     | expr "-" expr { BinOp.new(val[0], "-".to_sym, val[2]) }
     | expr "/" expr { BinOp.new(val[0], "/".to_sym, val[2]) }
     | expr "*" expr { BinOp.new(val[0], "*".to_sym, val[2]) }
     | expr_app
+
+  targs
+    : expr "," targs
+    | expr
 
   expr_app 
     : expr_app expr_atom { App.new(val[0], val[1]) }
@@ -134,7 +140,7 @@ module Unparser
 
     case self
     when Typ
-      "type #{name} : #{typ};\n"
+      "typ #{name} = #{typ};\n"
     when Val
       "val #{name}\n" \
         "  : #{typ}\n" \
@@ -147,7 +153,7 @@ module Unparser
     when Lamb
       tyargs_ = tyargs.empty? ? "": "<#{tyargs.join(', ')}>"
       args_ = args.empty? ? "" : "(#{args.join(', ')})"
-      "#{tyargs_}#{args_} => #{body} end"
+      "fun #{tyargs_}#{args_} => #{body} end"
     when TypScheme
       args_ = args.join(", ")
       "forall #{args_} . #{body}"
@@ -156,6 +162,12 @@ module Unparser
       "#{fst} #{op} #{snd}"
     when Hole
       "?"
+    when Arrow
+      if args.length == 1
+        "#{args[0]} -> #{ret}"
+      else
+        "(#{args.join(', ')}) -> #{ret}"
+      end
     when Paren
       "(#{value})"
     else
@@ -170,6 +182,7 @@ class App < Struct.new :f, :arg; include Unparser; end
 class Arg < Struct.new :name, :typ; include Unparser; end;
 class TypScheme < Struct.new :args, :body; include Unparser; end
 class Lamb < Struct.new :tyargs, :args, :body; include Unparser; end
+class Arrow < Struct.new :args, :ret; include Unparser; end
 class BinOp < Struct.new :fst, :op, :snd; include Unparser; end
 class Hole < Struct.new; include Unparser; end
 class Paren < Struct.new :value; include Unparser; end

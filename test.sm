@@ -1,26 +1,3 @@
 typ x = Int;
 val y : Int = 10;
-val f : Int -> Int -> Int = 1;
-val g : (Int -> Int) -> Int = 1;
-val h : Int = f 1 2;
-val a : Int = 1 + 2 * 3;
-val a : Int = 1 * 2 - 3;
-val i : Int = (x : Int, y : Int) => x + y end;
-val id
-  : forall T : Type . T -> T end
-  = <T: Type>(x : T) =>
-      x
-    end;
-
-val Box
-  : Type -> Type
-  = <T: Type> => forall R : Type . (T -> R) -> R end end;
-
-val box
-  : forall T : Type . T -> Box T end
-  = <T: Type>(x : T) =>
-      <R: Type>(k : T -> R) =>
-        k x
-      end
-    end;
-
+typ add = (Int, Int) -> Int;

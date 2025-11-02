@@ -53,7 +53,9 @@ class Parser
 
   expr_atom
     : "(" expr ")" { Paren.new(val[1]) }
+    | "<" expr ">" { TypParen.new(val[1]) }
     | "(" expr "," expr_seq ")" { Tuple.new([val[1], val[3]].flatten) }
+    | "<" expr "," expr_seq ">" { TypTuple.new([val[1], val[3]].flatten) }
     | NAME
     | const 
 
@@ -146,8 +148,8 @@ module Unparser
         "  : #{typ}\n" \
         "  = #{value};\n"
     when App
-      return "(#{f} #{arg})" if show_paren
-      "#{f} #{arg}"
+      return "(#{f}#{arg})" if show_paren
+      "#{f}#{arg}"
     when Arg
       "#{name} : #{typ}"
     when Lamb
@@ -166,8 +168,12 @@ module Unparser
       "#{args} -> #{ret}"
     when Tuple
       "(#{values.join(', ')})"
+    when TypTuple
+      "<#{values.join(', ')}>"
     when Paren
       "(#{value})"
+    when TypParen 
+      "<#{value}>"
     else
       raise "invalid ast node #{self.class}"
     end
@@ -184,4 +190,6 @@ class Arrow < Struct.new :args, :ret; include Unparser; end
 class BinOp < Struct.new :fst, :op, :snd; include Unparser; end
 class Hole < Struct.new; include Unparser; end
 class Paren < Struct.new :value; include Unparser; end
+class TypParen < Struct.new :value; include Unparser; end
 class Tuple < Struct.new :values; include Unparser; end
+class TypTuple < Struct.new :values; include Unparser; end

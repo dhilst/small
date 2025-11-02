@@ -2,16 +2,15 @@ typ x = Int;
 val y : Int = 10;
 typ add = (Int, Int) -> Int;
 
-
 val Box
   : Type -> Type
   = forall R : Type . (T -> R) -> R end;
 
 val box
-  : forall T : Type . T -> Box T end
+  : forall T : Type . T -> Box<T> end
   = fun <T: Type>(x: T) =>
       fun<R: Type>(k: T -> R) =>
-        k x
+        k(x)
       end
     end;
 
@@ -22,10 +21,10 @@ val Pair
     end;
 
 val pair
-  : forall A: Type, B: Type . (A, B) -> Pair A B end
+  : forall A: Type, B: Type . (A, B) -> Pair<A, B> end
   = fun<A: Type, B: Type>(a: A, b: B) =>
       fun<R: Type>(k: (A, B) -> R) =>
-        k a b
+        k(a,b)
       end
     end;
 
@@ -34,22 +33,22 @@ val Option
   = fun<T: Type> => forall R : Type . (T -> R, R) -> R end end;
 
 val none
-  : forall T : Type . Option T end
+  : forall T : Type . Option<T> end
   = fun<R: Type>(s: T -> R, n: R) => n end;
 
 val some
-  : forall T : Type . T -> Option T end
+  : forall T : Type . T -> Option<T> end
   = fun<T: Type>(x : T) =>
       fun<R: Type>(s: T -> R, n: R) =>
-        s x
+        s(x)
       end
     end;
 
-typ ret
-  = forall M : Type -> Type, A : Type .
-      A -> M A
-    end;
+val someone : Option<Int> = some<Int>(1);
+val someone : Option<Int> = some(1); # Int should be infered
+
+# Monadic bind type
 typ bind
   = forall M : Type -> Type, A : Type, B : Type .
-    (M A, A -> M B) -> M B
+    (M<A>, A -> M<B>) -> M<B>
   end;

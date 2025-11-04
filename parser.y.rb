@@ -40,22 +40,27 @@ class Parser
     | NAME ":" expr { [Arg.new(val[0], val[2])] }
 
   expr_bin
-    : expr "->" expr { Arrow.new(val[0], val[2]) }
-    | expr "+" expr { BinOp.new(val[0], "+".to_sym, val[2]) }
+    : expr "+" expr { BinOp.new(val[0], "+".to_sym, val[2]) }
     | expr "-" expr { BinOp.new(val[0], "-".to_sym, val[2]) }
     | expr "/" expr { BinOp.new(val[0], "/".to_sym, val[2]) }
     | expr "*" expr { BinOp.new(val[0], "*".to_sym, val[2]) }
+    | expr "->" expr { Arrow.new(val[0], val[2]) }
     | expr_app
 
-  expr_app 
-    : expr_app expr_atom { App.new(val[0], val[1]) }
-    | expr_atom
+  expr_app
+    : expr_atom
+    | expr_atom type_args
+    | expr_atom value_args
+    | expr_atom type_args value_args
+
+  type_args
+    : '<' expr_seq '>'
+
+  value_args
+    : '(' expr_seq ')'
 
   expr_atom
     : "(" expr ")" { Paren.new(val[1]) }
-    | "<" expr ">" { TypParen.new(val[1]) }
-    | "(" expr "," expr_seq ")" { Tuple.new([val[1], val[3]].flatten) }
-    | "<" expr "," expr_seq ">" { TypTuple.new([val[1], val[3]].flatten) }
     | NAME
     | const 
 

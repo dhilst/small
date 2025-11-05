@@ -45,6 +45,7 @@ class Parser
     | expr "/" expr { BinOp.new(val[0], "/".to_sym, val[2]) }
     | expr "*" expr { BinOp.new(val[0], "*".to_sym, val[2]) }
     | expr "->" expr { Arrow.new(val[0], val[2]) }
+    | "(" expr "," expr_seq ")" "->" expr { Arrow.new(val[0], val[2]) }
     | expr_app
 
   expr_app

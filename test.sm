@@ -13,13 +13,13 @@ val box
         k(x)
       end
     end;
-
+ 
 val Pair
   : (Type, Type) -> Type
   = fun<A: Type, B: Type> =>
       forall R : Type . ((A , B) -> R) -> R end
     end;
-
+ 
 val pair
   : forall A: Type, B: Type . (A, B) -> Pair<A, B> end
   = fun<A: Type, B: Type>(a: A, b: B) =>

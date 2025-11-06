@@ -44,21 +44,21 @@ class Parser
     | expr "-" expr { BinOp.new(val[0], "-".to_sym, val[2]) }
     | expr "/" expr { BinOp.new(val[0], "/".to_sym, val[2]) }
     | expr "*" expr { BinOp.new(val[0], "*".to_sym, val[2]) }
-    | expr "->" expr { Arrow.new(val[0], val[2]) }
-    | "(" expr "," expr_seq ")" "->" expr { Arrow.new(val[0], val[2]) }
+    | expr "->" expr { Arrow.new([val[0]], val[2]) }
+    | "(" expr "," expr_seq ")" "->" expr { Arrow.new([val[1], val[3]].flatten, val[6]) }
     | expr_app
 
   expr_app
     : expr_atom
-    | expr_atom type_args
-    | expr_atom value_args
-    | expr_atom type_args value_args
+    | expr_atom type_args { App.new(val[0], val[1], []) }
+    | expr_atom value_args { App.new(val[0], [], val[1]) }
+    | expr_atom type_args value_args { App.new(val[0], val[1], val[2]) }
 
   type_args
-    : '<' expr_seq '>'
+    : '<' expr_seq '>' { [val[1]].flatten }
 
   value_args
-    : '(' expr_seq ')'
+    : '(' expr_seq ')' { [val[1]].flatten }
 
   expr_atom
     : "(" expr ")" { Paren.new(val[1]) }
@@ -154,8 +154,15 @@ module Unparser
         "  : #{typ}\n" \
         "  = #{value};\n"
     when App
-      return "(#{f}#{arg})" if show_paren
-      "#{f}#{arg}"
+      fstr = StringIO.new
+      fstr << f
+      if tyargs.size > 0
+        fstr << "<#{tyargs.join(', ')}>"
+      end
+      if args.size > 0
+        fstr << "(#{args.join(', ')})"
+      end
+      fstr.string
     when Arg
       "#{name} : #{typ}"
     when Lamb
@@ -171,7 +178,12 @@ module Unparser
     when Hole
       "?"
     when Arrow
-      "#{args} -> #{ret}"
+      args_ = if args.size == 1
+                args[0].to_s
+              else
+                "(#{args.join(', ')})"
+              end
+      "#{args_} -> #{ret}"
     when Tuple
       "(#{values.join(', ')})"
     when TypTuple
@@ -188,7 +200,7 @@ end
 
 class Typ < Struct.new :name, :typ; include Unparser; end
 class Val < Struct.new :name, :typ, :value; include Unparser; end
-class App < Struct.new :f, :arg; include Unparser; end
+class App < Struct.new :f, :tyargs, :args; include Unparser; end
 class Arg < Struct.new :name, :typ; include Unparser; end;
 class TypScheme < Struct.new :args, :body; include Unparser; end
 class Lamb < Struct.new :tyargs, :args, :body; include Unparser; end

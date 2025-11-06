@@ -44,11 +44,69 @@ val some
       end
     end;
 
-val someone : Option<Int> = some<Int>(1);
-val someone : Option<Int> = some(1); # Int should be infered
+# Monad types
+val Ret
+  : (Type -> Type, Type) -> Type
+  = fun<M: Type -> Type, A: Type> =>
+      A -> M<A>
+    end;
 
-# Monadic bind type
-typ bind
-  = forall M : Type -> Type, A : Type, B : Type .
-    (M<A>, A -> M<B>) -> M<B>
-  end;
+val Bind
+  : (Type -> Type, Type) -> Type
+  = fun<M: Type -> Type, A: Type> =>
+      forall B : Type .
+        (M<A>, A -> M<B>) -> M<B>
+      end
+    end;
+
+val Monad 
+  : (Type -> Type, Type) -> Type
+  = fun<M: Type -> Type, A: Type> =>
+      Pair<
+        Ret<M, A>,                         
+        Bind<M, A>
+      >
+    end;
+
+# Monad constructor and projections
+val monad
+  : forall M : Type -> Type, A : Type . (Ret<M, A>, Bind<M, A>) -> Monad<M, A> end
+  = fun<M : Type -> Type, A : Type>(ret: Ret<M, A>, bind: Bind<M, A>) =>
+      pair<Ret<M, A>, Bind<M, A>>(ret, bind)
+    end;
+
+val ret
+  : forall M : Type -> Type, A : Type . Monad<M, A> -> (A -> M<A>) end
+  = fun<M : Type -> Type, A : Type>(m : Monad<M, A>) =>
+      m(fun(fst: Ret<M, A>, snd: Bind<M, A>) => fst end)
+    end;
+
+val bind
+  : forall M : Type -> Type, A : Type . Bind<M, A> end
+  = fun<M : Type -> Type, A : Type>(m : Monad<M, A>) =>
+      m(fun(fst: Ret<M, A>, snd: Bind<M, A>) => snd end)
+    end;
+
+
+val opt_monad
+  : forall A : Type . Monad<Option, A> end
+  = fun<A : Type> =>
+      pair<
+        A -> Option<A>,
+        forall B : Type . (Option<A>, A -> Option<B>) -> Option<B> end
+      >(
+        # ret
+        fun(x : A) =>
+          some<A>(x)
+        end, 
+        # bind
+        fun<B : Type>(ma: Option<A>, k: A -> Option<B>) =>
+          ma<A>(
+            fun(x : A) => k(x) end, # some x
+            none<B>                 # none
+          )
+        end
+      )
+    end;
+      
+
